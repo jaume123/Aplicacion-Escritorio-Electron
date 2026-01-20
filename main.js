@@ -1,24 +1,17 @@
-import { Controller } from './src/controller/controller.js';
+// Arranque del renderer con el controlador de autenticación
+import { AuthController } from './src/controller/authController.js';
 
-const controller = new Controller();
+const controller = new AuthController();
 
 window.onload = () => {
          
   // addEventListeners de la aplicacion
   //document.getElementById('').addEventListener('', () => controller.promptWindow());
 
+  // Inicializa el flujo de login (MVC)
   controller.init();
 
-  let url="http://<ip>:<puerto>/api/";
-
-  fetch (url, {
-    method: 'GET',// 'POST', 'PUT', 'DELETE'
-    headers: {
-      'Content-Type': 'application/json',
-      //'Autorization': 'Bearer TOKEN',
-      //'x-api-key': 'API_KEY'
-    }
-  })
-  .then((value) => value.json())
-  .then((value) => console.log(value))
+  // Placeholder del futuro consumo de API
+  // const url = "http://<ip>:<puerto>/api/";
+  // fetch(url).then(r => r.json()).then(console.log);
 }
