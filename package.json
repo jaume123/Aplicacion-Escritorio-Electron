@@ -1,7 +1,7 @@
 {
   "name": "plantilla-proyecto",
   "version": "1.0.0",
-  "description": "",
+  "description": "<p>Aplicación nativa de escritorio para la gestión del alumnado de un centro educativo (IES Abastos)</p>\r <p>(recordad hace <code>npm init</code> <code>npm install --save-dev</code></p>",
   "main": "index.js",
   "scripts": {
     "start": "electron .",
@@ -12,5 +12,13 @@
   "license": "ISC",
   "devDependencies": {
     "electron": "^38.1.2"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CarolSastre/Proyecto-provisional-ESCRITORIO.git"
+  },
+  "bugs": {
+    "url": "https://github.com/CarolSastre/Proyecto-provisional-ESCRITORIO/issues"
+  },
+  "homepage": "https://github.com/CarolSastre/Proyecto-provisional-ESCRITORIO#readme"
 }
