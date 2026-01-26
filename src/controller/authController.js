@@ -4,6 +4,7 @@
 
 import { LoginView } from '../view/loginView.js';
 import { AuthModel } from '../model/authModel.js';
+import { HomeController } from './homeController.js';
 
 export class AuthController {
   #view;
@@ -19,7 +20,7 @@ export class AuthController {
     if (!this.#model.isLoggedIn) {
       this.#view.bind({
         onLogin: ({ email, password }) => this.#handleLogin(email, password),
-        onRegister: () => this.#handleRegister(),
+        onRegister: (payload) => this.#handleRegister(payload),
       });
       this.#view.render();
     }
@@ -29,11 +30,9 @@ export class AuthController {
     try {
       const result = await this.#model.login(email, password);
       if (result.ok) {
-        // En futuro: navegar a dashboard; por ahora, mensaje mínimo
-        const root = document.querySelector('#app');
-        if (root) {
-          root.innerHTML = `<div style="text-align:center; padding:24px;">\n            <h2>Bienvenido</h2>\n            <p>Has iniciado sesión como <strong>${result.user.email}</strong>.</p>\n            <p>(Siguiente paso: Home/Dashboard)</p>\n          </div>`;
-        }
+        // Navegar a Home/Dashboard según rol (MVC)
+        const home = new HomeController(result.user);
+        home.init();
       }
     } catch (e) {
       // Re-render y mostrar error simple en la vista
@@ -46,8 +45,21 @@ export class AuthController {
     }
   }
 
-  async #handleRegister() {
-    // Placeholder: se implementará en el siguiente paso
-    alert('Registro: funcionalidad pendiente.');
+  async #handleRegister(payload) {
+    try {
+      const res = await this.#model.registerAlumno(payload);
+      if (res?.ok) {
+        // Tras registrarse como alumno, volver al login
+        alert('Alumno registrado correctamente. Ya puedes iniciar sesión.');
+        this.#view.render();
+      }
+    } catch (e) {
+      this.#view.render();
+      const el = document.querySelector('#error');
+      if (el) {
+        el.textContent = e.message || 'Error al registrar alumno';
+        el.hidden = false;
+      }
+    }
   }
 }

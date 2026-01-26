@@ -20,5 +20,8 @@
   "bugs": {
     "url": "https://github.com/CarolSastre/Proyecto-provisional-ESCRITORIO/issues"
   },
-  "homepage": "https://github.com/CarolSastre/Proyecto-provisional-ESCRITORIO#readme"
+  "homepage": "https://github.com/CarolSastre/Proyecto-provisional-ESCRITORIO#readme",
+  "dependencies": {
+    "mongodb": "^7.0.0"
+  }
 }
