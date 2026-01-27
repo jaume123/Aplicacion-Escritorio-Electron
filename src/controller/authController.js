@@ -19,17 +19,26 @@ export class AuthController {
     // Si no hay sesión, mostrar login
     if (!this.#model.isLoggedIn) {
       this.#view.bind({
-        onLogin: ({ email, password }) => this.#handleLogin(email, password),
+        onLogin: ({ email, password, remember }) => this.#handleLogin(email, password, remember),
         onRegister: (payload) => this.#handleRegister(payload),
       });
       this.#view.render();
     }
   }
 
-  async #handleLogin(email, password) {
+  async #handleLogin(email, password, remember = false) {
     try {
       const result = await this.#model.login(email, password);
       if (result.ok) {
+        // Guardar/limpiar sesión recordada según la preferencia
+        try {
+          if (remember) {
+            const payload = { email, password, autoLogin: true, ts: Date.now() };
+            localStorage.setItem('wf_saved_session', JSON.stringify(payload));
+          } else {
+            localStorage.removeItem('wf_saved_session');
+          }
+        } catch {}
         // Navegar a Home/Dashboard según rol (MVC)
         const home = new HomeController(result.user);
         home.init();

@@ -22,10 +22,12 @@ export class LoginView {
   // Renderiza la tarjeta según el modo actual
   render() {
     if (!this.#root) throw new Error('No se encontró el contenedor raíz #app');
+    // Marca el contenedor raíz como modo login para centrar la tarjeta
+    this.#root.classList.add('is-login');
     const isRegister = this.#mode === 'register';
     const cardClass = isRegister ? 'login-card register' : 'login-card';
     const title = isRegister ? 'Crear cuenta (Alumno)' : 'Web Familia · Escritorio';
-    const subtitle = isRegister ? 'Completa tus datos para registrarte' : 'Accede con tu usuario y contraseña';
+    const subtitle = isRegister ? 'Completa tus datos para registrarte' : 'Accede con tu correo y contraseña';
 
     this.#root.innerHTML = `
       <section class="${cardClass}" aria-label="${isRegister ? 'Registro' : 'Acceso'}">
@@ -79,17 +81,26 @@ export class LoginView {
               <span class="focus-bg"></span>
             </div>
           </div>
+          ${isRegister ? '' : `
+          <div class="form-group options">
+            <label class="checkbox switch">
+              <input type="checkbox" id="auto-login" />
+              <span class="slider" aria-hidden="true"></span>
+              <span class="label-text">Guardar inicio de sesión</span>
+            </label>
+          </div>
+          `}
           <div class="actions">
             ${isRegister ? `
               <button id="btn-submit-register" class="btn btn-primary" type="submit">Crear cuenta</button>
               <button id="btn-back" class="btn btn-secondary" type="button">Volver a Login</button>
             ` : `
-              <button id="btn-login" class="btn btn-primary" type="submit">Login</button>
-              <button id="btn-register" class="btn btn-secondary" type="button">Register</button>
+              <button id="btn-login" class="btn btn-primary" type="submit">Iniciar sesión</button>
+              <button id="btn-register" class="btn btn-secondary" type="button">Registrarse</button>
             `}
           </div>
+          <div class="helper">${isRegister ? 'Los profesores y admin se crean desde la base de datos.' : 'Pulsa Enter o el botón para iniciar sesión.'}</div>
           <div id="error" class="error" role="alert" aria-live="polite" hidden></div>
-          ${isRegister ? '<div class="helper">Los profesores y admin se crean desde la base de datos.</div>' : '<div class="helper">Si no tienes cuenta, pulsa Register</div>'}
         </form>
       </section>
     `;
@@ -102,6 +113,9 @@ export class LoginView {
     this.#elements.btnRegister = this.#root.querySelector('#btn-register');
     this.#elements.btnSubmitRegister = this.#root.querySelector('#btn-submit-register');
     this.#elements.btnBack = this.#root.querySelector('#btn-back');
+    this.#elements.autoLogin = this.#root.querySelector('#auto-login');
+      // Carga sesión guardada: auto-relleno y opcional auto-login
+      this.#loadSavedSession();
     this.#elements.error = this.#root.querySelector('#error');
 
     // Eventos UI → Controller
@@ -110,10 +124,11 @@ export class LoginView {
       if (this.#mode === 'login') {
         const email = this.#elements.email.value.trim();
         const password = this.#elements.password.value.trim();
+        const remember = !!this.#elements.autoLogin?.checked;
         const validation = this.#validateLogin(email, password);
         if (!validation.ok) return this.#showError(validation.message);
         this.#clearError();
-        if (typeof this.#onLogin === 'function') this.#onLogin({ email, password });
+        if (typeof this.#onLogin === 'function') this.#onLogin({ email, password, remember });
       } else {
         const payload = this.#collectRegisterPayload();
         const validation = this.#validateRegister(payload);
@@ -123,13 +138,19 @@ export class LoginView {
       }
     });
 
+    // Enviar con Enter desde contraseña
+    this.#elements.password.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') {
+        this.#elements.form.requestSubmit();
+      }
+    });
+
     if (this.#elements.btnRegister) {
       this.#elements.btnRegister.addEventListener('click', () => {
         this.#mode = 'register';
         this.render();
       });
     }
-
     if (this.#elements.btnBack) {
       this.#elements.btnBack.addEventListener('click', () => {
         this.#mode = 'login';
@@ -159,6 +180,18 @@ export class LoginView {
       field.addEventListener('pointermove', update);
       field.addEventListener('pointerenter', update);
     });
+  }
+  // Carga y aplica la sesión guardada
+  #loadSavedSession() {
+    try {
+      const raw = localStorage.getItem('wf_saved_session');
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (data?.email) this.#elements.email.value = data.email;
+      if (data?.password) this.#elements.password.value = data.password;
+      if (this.#elements.autoLogin) this.#elements.autoLogin.checked = !!data?.autoLogin;
+      // Solo auto-rellenar; no iniciar sesión automáticamente
+    } catch {}
   }
 
   // Validación Login
