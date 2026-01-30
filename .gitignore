@@ -49,6 +49,9 @@
  # VS Code
  .vscode/*
  !.vscode/extensions.json
+ 
+ # Exclude nested repo copy
+ ProyectoIntermodular/
 .DS_Store
 .env
 .gclient_done
