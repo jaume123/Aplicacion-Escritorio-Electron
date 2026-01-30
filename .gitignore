@@ -1,3 +1,54 @@
+ # Node dependencies
+ node_modules/
+ 
+ # Build outputs
+ build/
+ dist/
+ out/
+ release/
+ .tmp/
+ tmp/
+ temp/
+ .cache/
+ .parcel-cache/
+ .turbo/
+ 
+ # Coverage and reports
+ coverage/
+ .nyc_output/
+ 
+ # Logs
+ *.log
+ npm-debug.log*
+ yarn-debug.log*
+ yarn-error.log*
+ pnpm-debug.log*
+ 
+ # Env files
+ .env
+ .env.*
+ 
+ # OS/editor files
+ .DS_Store
+ Thumbs.db
+ .idea/
+ .eslintcache
+ 
+ # Source maps
+ *.map
+ 
+ # Electron/packaging artifacts
+ *.asar
+ app/dist/
+ 
+ # Framework caches
+ .next/
+ .nuxt/
+ .vercel/
+ 
+ # VS Code
+ .vscode/*
+ !.vscode/extensions.json
 .DS_Store
 .env
 .gclient_done

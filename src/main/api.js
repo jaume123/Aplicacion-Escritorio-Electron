@@ -1,3 +1,16 @@
+// --- NFC API ---
+// Asignar token NFC a usuario
+async function asignarTokenNFC(userId, token) {
+  // Llama a la función del backend (db.js)
+  const { asignarTokenNFC } = require('./db');
+  return await asignarTokenNFC(userId, token);
+}
+
+// Registrar entrada/salida por token NFC
+async function registrarNFC(token) {
+  const { registrarNFC } = require('./db');
+  return await registrarNFC(token);
+}
 // Cliente de API Spring para el proceso principal de Electron
 // Ajusta BASE_URL y rutas según tu API real
 
@@ -62,4 +75,9 @@ async function registerAlumno(payload) {
   return { ok: true, id };
 }
 
-module.exports = { login, registerAlumno };
+module.exports = {
+  login,
+  registerAlumno,
+  asignarTokenNFC,
+  registrarNFC,
+};

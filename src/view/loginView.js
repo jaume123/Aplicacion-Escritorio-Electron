@@ -2,24 +2,36 @@
 // - Encargada de renderizar el formulario y emitir eventos
 // - No contiene lógica de negocio
 
+/**
+ * Vista de Login
+ * - Renderiza formulario de acceso/registro
+ * - Suscribe escucha NFC continua en modo login para auto-login
+ */
 export class LoginView {
   #root;
   #onLogin;
   #onRegister;
   #elements = {};
   #mode = 'login'; // 'login' | 'register'
+  #nfcSubscribed = false;
+  #nfcHandler = null;
+  #nfcLogging = false;
 
   constructor(rootSelector = '#app') {
     this.#root = document.querySelector(rootSelector);
   }
 
   // Asigna callbacks del controlador
+  /** Asigna callbacks del controlador. */
   bind({ onLogin, onRegister }) {
     this.#onLogin = onLogin;
     this.#onRegister = onRegister;
   }
 
   // Renderiza la tarjeta según el modo actual
+  /**
+   * Renderiza la tarjeta (login/register), vincula eventos y gestiona NFC.
+   */
   render() {
     if (!this.#root) throw new Error('No se encontró el contenedor raíz #app');
     // Marca el contenedor raíz como modo login para centrar la tarjeta
@@ -180,8 +192,51 @@ export class LoginView {
       field.addEventListener('pointermove', update);
       field.addEventListener('pointerenter', update);
     });
+
+    // --- INICIO DE SESIÓN AUTOMÁTICO POR NFC (ESCUCHA CONTINUA) ---
+    try {
+      const { ipcRenderer } = window.require ? window.require('electron') : {};
+      if (ipcRenderer) {
+        // Si cambiamos a modo registro y había suscripción, limpiar
+        if (this.#mode !== 'login' && this.#nfcSubscribed) {
+          ipcRenderer.send('nfc:detener-escucha');
+          if (this.#nfcHandler) ipcRenderer.removeListener('nfc:uid', this.#nfcHandler);
+          this.#nfcSubscribed = false;
+          this.#nfcHandler = null;
+          this.#nfcLogging = false;
+        }
+
+        if (this.#mode === 'login' && !this.#nfcSubscribed) {
+          this.#nfcHandler = async (_event, uid) => {
+            if (this.#nfcLogging) return; // evitar reentradas
+            this.#nfcLogging = true;
+            try {
+              const response = await ipcRenderer.invoke('nfc:login', uid);
+              if (response && response.ok && response.user) {
+                // Registrar entrada/salida
+                await ipcRenderer.invoke('nfc:registrar-entrada-salida', uid);
+                if (typeof this.#onLogin === 'function') {
+                  this.#onLogin({ email: response.user.email, password: response.user.password, remember: false });
+                }
+              } else {
+                this.#showError('NFC no asociado a ningún usuario.');
+                this.#nfcLogging = false;
+              }
+            } catch (err) {
+              this.#showError(err?.message || 'Error en login por NFC');
+              this.#nfcLogging = false;
+            }
+          };
+
+          ipcRenderer.on('nfc:uid', this.#nfcHandler);
+          ipcRenderer.send('nfc:escuchar-login');
+          this.#nfcSubscribed = true;
+        }
+      }
+    } catch {}
   }
   // Carga y aplica la sesión guardada
+  /** Carga y aplica sesión guardada (email/password) si existe. */
   #loadSavedSession() {
     try {
       const raw = localStorage.getItem('wf_saved_session');
@@ -195,6 +250,7 @@ export class LoginView {
   }
 
   // Validación Login
+  /** Valida campos de login. */
   #validateLogin(email, password) {
     if (!email || !password) {
       return { ok: false, message: 'Completa correo y contraseña.' };
@@ -207,6 +263,7 @@ export class LoginView {
   }
 
   // Recolecta datos del formulario de registro
+  /** Recolecta campos del formulario de registro. */
   #collectRegisterPayload() {
     const get = (id) => this.#root.querySelector('#' + id)?.value.trim() || '';
     return {
@@ -220,6 +277,7 @@ export class LoginView {
   }
 
   // Validación Registro
+  /** Valida formulario de registro de alumno. */
   #validateRegister(p) {
     if (!p.nombre || !p.apellidos) return { ok: false, message: 'Nombre y apellidos son obligatorios.' };
     const dniRe = /^[0-9]{7,8}[A-Za-z]?$/; // formato básico
@@ -232,6 +290,7 @@ export class LoginView {
   }
 
   // Mensajes de error accesibles
+  /** Muestra error accesible con animación. */
   #showError(msg) {
     this.#elements.error.textContent = msg;
     this.#elements.error.hidden = false;
@@ -241,12 +300,14 @@ export class LoginView {
     this.#elements.error.classList.add('shake');
   }
 
+  /** Limpia error mostrado. */
   #clearError() {
     this.#elements.error.textContent = '';
     this.#elements.error.hidden = true;
   }
 
   // API pública de la vista, por si se necesita limpiar
+  /** Limpia el contenedor raíz. */
   clear() {
     if (this.#root) this.#root.innerHTML = '';
   }

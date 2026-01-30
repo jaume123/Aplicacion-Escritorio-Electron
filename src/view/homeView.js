@@ -10,6 +10,9 @@ export class HomeView {
   #horario = [];
   #horarios = { manana: [], tarde: [] };
   #cfg = { startHour: 8, endHour: 18, hourHeight: 52, slotMinutes: 15 };
+  // Gestión NFC (estado y filtros)
+  #nfcUsers = [];
+  #nfcFilter = { role: 'all', status: 'all', q: '' };
   #menuItems = {
     alumno: [
       { id: 'mi-perfil', label: 'Mi Perfil' },
@@ -31,6 +34,7 @@ export class HomeView {
       { id: 'asistencias', label: 'Asistencias' },
       { id: 'crear-alumnos', label: 'Crear Alumnos' },
       { id: 'crear-profesores', label: 'Crear Profesores' },
+      { id: 'gestion-nfc', label: 'Gestión de NFC' },
       { id: 'lista-alumnos', label: 'Lista Alumnos' },
       { id: 'lista-profesores', label: 'Lista Profesores' },
       { id: 'departamentos', label: 'Departamentos' },
@@ -87,7 +91,7 @@ export class HomeView {
             </header>
 
             <section class="panel">
-              ${this.#state.section === 'horario' ? this.#renderHorario() : `
+              ${this.#state.section === 'horario' ? this.#renderHorario() : this.#state.section === 'gestion-nfc' ? this.#renderGestionNFC() : `
                 <div class="panel-header">
                   <button class="icon" aria-label="Mes anterior" id="cal-prev">‹</button>
                   <div class="month">${this.#monthLabel()}</div>
@@ -105,10 +109,65 @@ export class HomeView {
 
     // Listeners: NFC placeholder, navegación de calendario y menú
     const nfcBtn = this.#root.querySelector('#btn-nfc');
-    if (nfcBtn) nfcBtn.addEventListener('click', () => {
-      // Alterna el brillo: activo cuando no tiene 'toggled'
+    if (nfcBtn) nfcBtn.addEventListener('click', async () => {
+      // Comprobar si el usuario ya tiene un NFC asignado
+      try {
+        const { ipcRenderer } = window.require ? window.require('electron') : {};
+        if (!ipcRenderer) return;
+        const check = await ipcRenderer.invoke('nfc:check-user', this.#user);
+        if (check && check.hasNFC) {
+          // Mostrar mensaje de que ya tiene NFC
+          if (document.querySelector('.nfc-float-menu')) return;
+          const floatMenu = document.createElement('div');
+          floatMenu.className = 'nfc-float-menu';
+          floatMenu.innerHTML = `
+            <div class="nfc-float-backdrop"></div>
+            <div class="nfc-float-content">
+              <h3>NFC ya habilitado</h3>
+              <p>Ya tienes un NFC asignado a tu usuario.</p>
+              <button class="btn btn-ghost" id="nfc-float-cancel">Cerrar</button>
+            </div>
+          `;
+          document.body.appendChild(floatMenu);
+          floatMenu.querySelector('#nfc-float-cancel').onclick = () => floatMenu.remove();
+          floatMenu.querySelector('.nfc-float-backdrop').onclick = () => floatMenu.remove();
+          return;
+        }
+      } catch {}
+
       nfcBtn.classList.toggle('toggled');
-      alert('NFC: funcionalidad próximamente');
+      if (document.querySelector('.nfc-float-menu')) return;
+      const floatMenu = document.createElement('div');
+      floatMenu.className = 'nfc-float-menu';
+      floatMenu.innerHTML = `
+        <div class="nfc-float-backdrop"></div>
+        <div class="nfc-float-content">
+          <h3>Activar NFC</h3>
+          <p id="nfc-status">Acerque el móvil al lector de NFC</p>
+          <button class="btn btn-ghost" id="nfc-float-cancel">Cancelar</button>
+        </div>
+      `;
+      document.body.appendChild(floatMenu);
+      floatMenu.querySelector('#nfc-float-cancel').onclick = () => floatMenu.remove();
+      floatMenu.querySelector('.nfc-float-backdrop').onclick = () => floatMenu.remove();
+
+      // Lógica de integración con backend (Electron)
+      try {
+        const { ipcRenderer } = window.require ? window.require('electron') : {};
+        if (!ipcRenderer) {
+          floatMenu.querySelector('#nfc-status').textContent = 'No disponible en este entorno.';
+          return;
+        }
+        floatMenu.querySelector('#nfc-status').textContent = 'Esperando tarjeta...';
+        const result = await ipcRenderer.invoke('nfc:leer', this.#user);
+        if (result && result.ok) {
+          floatMenu.querySelector('#nfc-status').textContent = '¡NFC guardado! UID: ' + result.uid;
+        } else {
+          floatMenu.querySelector('#nfc-status').textContent = 'No se pudo guardar el NFC.';
+        }
+      } catch (err) {
+        document.querySelector('#nfc-status').textContent = 'Error: ' + (err.message || err);
+      }
     });
 
     const prev = this.#root.querySelector('#cal-prev');
@@ -120,12 +179,13 @@ export class HomeView {
     if (clearBtn) clearBtn.addEventListener('click', () => {
       try {
         localStorage.removeItem('wf_saved_session');
-        alert('Sesión guardada eliminada.');
+        this.#toast('Sesión guardada eliminada.', 'ok');
       } catch {}
     });
 
     this.#bindMenu();
     if (this.#state.section === 'horario') this.#bindHorarioEvents();
+    if (this.#state.section === 'gestion-nfc' && this.#user?.role === 'admin') this.#bindGestionNFC();
   }
 
   #monthLabel() {
@@ -188,13 +248,349 @@ export class HomeView {
         if (id === 'horario') {
           this.#state.section = 'horario';
           this.render();
+        } else if (id === 'gestion-nfc' && this.#user?.role === 'admin') {
+          this.#state.section = 'gestion-nfc';
+          this.render();
         } else {
           this.#state.section = 'panel';
-          if (id !== 'mi-perfil') alert('Sección en construcción: ' + id);
+          if (id !== 'mi-perfil') this.#toast('Sección en construcción: ' + id, 'warn');
           this.render();
         }
       });
     });
+  }
+
+  // ---------- Gestión de NFC (Admin) ----------
+  /**
+   * Renderiza la sección de Gestión de NFC para admin.
+   * Incluye filtros por rol/estado y buscador.
+   */
+  #renderGestionNFC() {
+    return `
+      <div class="nfc-admin">
+        <div class="nfc-admin-header">
+          <h3>Gestión de NFC</h3>
+          <p>Habilita, deshabilita o modifica los NFC asignados a usuarios.</p>
+        </div>
+        <div class="nfc-filters">
+          <div class="row">
+            <label>Rol</label>
+            <select id="nfc-filter-role">
+              <option value="all">Todos</option>
+              <option value="alumno">Alumno</option>
+              <option value="professor">Profesor</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <div class="row">
+            <label>Estado</label>
+            <select id="nfc-filter-status">
+              <option value="all">Todos</option>
+              <option value="with">Con NFC</option>
+              <option value="without">Sin NFC</option>
+            </select>
+          </div>
+          <div class="row grow">
+            <label>Buscar</label>
+            <input type="search" id="nfc-filter-q" placeholder="Nombre o email..." />
+          </div>
+        </div>
+        <div id="nfc-admin-list" class="nfc-admin-list">
+          <div class="loading">Cargando usuarios...</div>
+        </div>
+      </div>
+    `;
+  }
+
+  /**
+   * Carga usuarios (IPC) y vincula los filtros/botones de la sección.
+   */
+  #bindGestionNFC() {
+    try {
+      const { ipcRenderer } = window.require ? window.require('electron') : {};
+      if (!ipcRenderer) return;
+      const listEl = this.#root.querySelector('#nfc-admin-list');
+      if (!listEl) return;
+      ipcRenderer.invoke('nfc:list-users-with-nfc').then((users) => {
+        this.#nfcUsers = users || [];
+        this.#applyNfcFiltersAndRender(listEl);
+        // Bind filter controls
+        const roleSel = this.#root.querySelector('#nfc-filter-role');
+        const statusSel = this.#root.querySelector('#nfc-filter-status');
+        const qInput = this.#root.querySelector('#nfc-filter-q');
+        if (roleSel) roleSel.addEventListener('change', ()=>{ this.#nfcFilter.role = roleSel.value; this.#applyNfcFiltersAndRender(listEl); });
+        if (statusSel) statusSel.addEventListener('change', ()=>{ this.#nfcFilter.status = statusSel.value; this.#applyNfcFiltersAndRender(listEl); });
+        if (qInput) {
+          let t=null; qInput.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(()=>{ this.#nfcFilter.q = (qInput.value||'').trim().toLowerCase(); this.#applyNfcFiltersAndRender(listEl); }, 180); });
+        }
+      }).catch(err => {
+        listEl.innerHTML = '<div class="error">Error cargando usuarios: '+(err?.message||err)+'</div>';
+      });
+    } catch {}
+  }
+
+  /**
+   * Aplica filtros y renderiza filas con sus acciones.
+   */
+  #applyNfcFiltersAndRender(listEl) {
+    const f = this.#nfcFilter;
+    const filtered = (this.#nfcUsers||[]).filter(u => {
+      const roleOk = f.role==='all' ? true : (String(u.role||'alumno')===f.role);
+      const statusOk = f.status==='all' ? true : (f.status==='with' ? !!u.nfcToken : !u.nfcToken);
+      const q = f.q || '';
+      const qOk = !q ? true : ((u.nombre||'').toLowerCase().includes(q) || (u.email||'').toLowerCase().includes(q));
+      return roleOk && statusOk && qOk;
+    });
+    listEl.innerHTML = this.#renderNfcRows(filtered) || '<div class="empty">No hay usuarios.</div>';
+    this.#bindRowActions(listEl, filtered);
+  }
+
+  /**
+   * Renderiza filas de usuarios con estado NFC y acciones.
+   */
+  #renderNfcRows(users) {
+    return (users||[]).map(u=>{
+      const has = !!u.nfcToken;
+      const tokenLabel = has ? `UID: ${u.nfcToken}` : 'Sin NFC';
+      return `
+        <div class="nfc-row" data-id="${u._id}">
+          <div class="nfc-row-info">
+            <div class="user-card small">
+              <div class="avatar" aria-hidden="true"></div>
+              <div class="user-info">
+                <div class="name">${u.nombre || 'Usuario'}</div>
+                <div class="email">${u.email || ''}</div>
+                <div class="role">Rol: ${u.role || 'alumno'}</div>
+              </div>
+            </div>
+          </div>
+          <div class="nfc-row-status">
+            <span class="status-pill ${has?'ok':'warn'}">${tokenLabel}</span>
+          </div>
+          <div class="nfc-row-actions">
+            ${has ? `<button class="btn btn-ghost" data-act="disable"><span class="ico" aria-hidden="true"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="2" fill="none"/><line x1="4" y1="4" x2="12" y2="12" stroke="currentColor" stroke-width="2"/></svg></span>Deshabilitar NFC</button>` : `<button class="btn btn-ghost" data-act="enable"><span class="ico" aria-hidden="true"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="2" fill="none"/><line x1="8" y1="4" x2="8" y2="12" stroke="currentColor" stroke-width="2"/><line x1="4" y1="8" x2="12" y2="8" stroke="currentColor" stroke-width="2"/></svg></span>Habilitar NFC</button>`}
+            <button class="btn" data-act="modify"><span class="ico" aria-hidden="true"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M12.5 2.5l1 1c.7.7.7 1.8 0 2.5l-7 7-3 1 1-3 7-7c.7-.7 1.8-.7 2.5 0z"/></svg></span>Modificar</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  /**
+   * Vincula acciones de fila: deshabilitar, habilitar y modificar NFC.
+   */
+  #bindRowActions(listEl, users){
+    listEl.querySelectorAll('.nfc-row .btn').forEach(btn => {
+      btn.addEventListener('click', async (ev) => {
+        const row = ev.currentTarget.closest('.nfc-row');
+        const userId = row?.getAttribute('data-id');
+        const act = ev.currentTarget.getAttribute('data-act');
+        const { ipcRenderer } = window.require ? window.require('electron') : {};
+        const user = (users||[]).find(x=>x._id===userId) || { _id: userId };
+        if (!ipcRenderer || !userId) return;
+        try {
+          if (act === 'disable') {
+            const ok = await this.#confirmDialog('Deshabilitar NFC', '¿Deshabilitar NFC de este usuario?', 'Deshabilitar', 'Cancelar');
+            if (!ok) return;
+            const res = await ipcRenderer.invoke('nfc:disable', userId);
+            if (res?.ok) this.#refreshGestionNFC();
+          } else if (act === 'enable') {
+            const ok = await this.#confirmDialog('Habilitar NFC', '¿Asignar un nuevo NFC a este usuario?', 'Habilitar', 'Cancelar');
+            if (!ok) return;
+            await this.#assignNfcToUser(ipcRenderer, user);
+          } else if (act === 'modify') {
+            const ok = await this.#confirmDialog('Modificar NFC', '¿Modificar y asignar otro NFC a este usuario?', 'Modificar', 'Cancelar');
+            if (!ok) return;
+            await this.#assignNfcToUser(ipcRenderer, user, true);
+          }
+        } catch (err) {
+          this.#toast('Error NFC: ' + (err?.message || err), 'error');
+        }
+      });
+    });
+  }
+
+  /**
+   * Intenta asignar/modificar NFC a un usuario mostrando overlay.
+   * Gestiona conflictos mostrando propietario y acciones admin.
+   */
+  async #assignNfcToUser(ipcRenderer, user, modify=false) {
+    // Mostrar overlay temporal de lectura
+    const overlay = document.createElement('div');
+    overlay.className = 'nfc-float-menu';
+    overlay.innerHTML = `
+      <div class="nfc-float-backdrop"></div>
+      <div class="nfc-float-content">
+        <h3>${modify? 'Modificar NFC' : 'Habilitar NFC'}</h3>
+        <p id="nfc-status">Acerque la tarjeta al lector...</p>
+        <button class="btn btn-ghost" id="nfc-float-cancel">Cancelar</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    overlay.querySelector('#nfc-float-cancel').onclick = () => overlay.remove();
+    overlay.querySelector('.nfc-float-backdrop').onclick = () => overlay.remove();
+    try {
+      const res = await ipcRenderer.invoke('nfc:leer', { _id: user._id, email: user.email, nombre: user.nombre });
+      if (res?.ok) {
+        overlay.querySelector('#nfc-status').textContent = `Asignado UID: ${res.uid}`;
+        setTimeout(()=> overlay.remove(), 1200);
+        this.#refreshGestionNFC();
+      } else {
+        // Mostrar mensaje con detalle y propietario si existe
+        let ownerInfo = null;
+        if (res?.uid) {
+          try {
+            const owner = await ipcRenderer.invoke('nfc:get-owner', res.uid);
+            if (owner?.ok && owner?.user) ownerInfo = owner.user;
+          } catch {}
+        }
+        const content = overlay.querySelector('.nfc-float-content');
+        const lines = [];
+        if (ownerInfo) {
+          lines.push(`<b>Este NFC ya está habilitado</b>`);
+          lines.push(`<b>Pertenece a:</b> ${ownerInfo.nombre || ownerInfo.email}`);
+          lines.push(`<b>Rol:</b> ${ownerInfo.role || 'alumno'}`);
+          if (ownerInfo.email) lines.push(`<b>Email:</b> ${ownerInfo.email}`);
+        } else {
+          lines.push(res?.error || 'No se pudo asignar NFC.');
+        }
+        const isAdmin = this.#user?.role === 'admin';
+        const actions = `
+          <div class="nfc-owner-actions">
+            ${ownerInfo ? `<button class="btn btn-ghost" id="nfc-owner-view"><span class="ico" aria-hidden="true"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3 4-4 6-4s6 1 6 4"/></svg></span>Ver perfil</button>` : ''}
+            ${ownerInfo && isAdmin ? `<button class="btn" id="nfc-owner-disable"><span class="ico" aria-hidden="true"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="2" fill="none"/><line x1="4" y1="4" x2="12" y2="12" stroke="currentColor" stroke-width="2"/></svg></span>Deshabilitar NFC</button>` : ''}
+            <button class="btn btn-ghost" id="nfc-owner-retry"><span class="ico" aria-hidden="true"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 3a5 5 0 1 0 4.9 6H11l3-3 3 3h-1.9A7 7 0 1 1 8 1v2z"/></svg></span>Reintentar asignación</button>
+            <button class="btn btn-ghost" id="nfc-float-close"><span class="ico" aria-hidden="true"><svg viewBox="0 0 16 16" fill="currentColor"><line x1="4" y1="4" x2="12" y2="12" stroke="currentColor" stroke-width="2"/><line x1="12" y1="4" x2="4" y2="12" stroke="currentColor" stroke-width="2"/></svg></span>Cerrar</button>
+          </div>`;
+        content.innerHTML = `
+          <h3>NFC en uso</h3>
+          <p id="nfc-status">${lines.join('<br>')}</p>
+          ${actions}
+        `;
+
+        const close = () => overlay.remove();
+        const viewBtn = content.querySelector('#nfc-owner-view');
+        if (viewBtn && ownerInfo) {
+          viewBtn.onclick = async () => {
+            await this.#confirmDialog('Perfil del usuario', `<b>Nombre:</b> ${ownerInfo.nombre || ''}<br><b>Email:</b> ${ownerInfo.email || ''}<br><b>Rol:</b> ${ownerInfo.role || 'alumno'}`, 'Cerrar', 'Cancelar');
+          };
+        }
+        const disableBtn = content.querySelector('#nfc-owner-disable');
+        if (disableBtn && ownerInfo && isAdmin) {
+          disableBtn.onclick = async () => {
+            const ok = await this.#confirmDialog('Deshabilitar NFC', `¿Deshabilitar el NFC de ${ownerInfo.nombre || ownerInfo.email}?`, 'Deshabilitar', 'Cancelar');
+            if (!ok) return;
+            try {
+              const resDisable = await ipcRenderer.invoke('nfc:disable', ownerInfo._id);
+              if (resDisable?.ok) {
+                content.querySelector('#nfc-status').innerHTML = 'NFC del propietario deshabilitado. Acerque la tarjeta de nuevo para asignar.';
+                // Auto-reintento: escuchar temporalmente el mismo UID y asignar
+                let done = false;
+                const uidTarget = res?.uid;
+                const handler = async (_event, uidNow) => {
+                  if (done) return;
+                  if (!uidTarget || uidNow !== uidTarget) return;
+                  done = true;
+                  try {
+                    const re = await ipcRenderer.invoke('nfc:leer', { _id: user._id, email: user.email, nombre: user.nombre });
+                    if (re?.ok) {
+                      content.querySelector('#nfc-status').innerHTML = `Asignado UID: ${re.uid}`;
+                      setTimeout(()=> overlay.remove(), 1200);
+                      this.#refreshGestionNFC();
+                    } else {
+                      this.#toast(re?.error || 'Sigue sin poder asignar.', 'warn');
+                    }
+                  } catch (e) {
+                    this.#toast('Error al auto-asignar: ' + (e?.message || e), 'error');
+                  } finally {
+                    ipcRenderer.removeListener('nfc:uid', handler);
+                  }
+                };
+                ipcRenderer.on('nfc:uid', handler);
+                setTimeout(() => { if (!done) ipcRenderer.removeListener('nfc:uid', handler); }, 8000);
+              } else {
+                this.#toast('No se pudo deshabilitar.', 'error');
+              }
+            } catch (e) {
+              this.#toast('Error al deshabilitar: ' + (e?.message || e), 'error');
+            }
+          };
+        }
+        const retryBtn = content.querySelector('#nfc-owner-retry');
+        if (retryBtn) {
+          retryBtn.onclick = async () => {
+            try {
+              const re = await ipcRenderer.invoke('nfc:leer', { _id: user._id, email: user.email, nombre: user.nombre });
+              if (re?.ok) {
+                content.querySelector('#nfc-status').innerHTML = `Asignado UID: ${re.uid}`;
+                setTimeout(()=> overlay.remove(), 1200);
+                this.#refreshGestionNFC();
+              } else {
+                this.#toast(re?.error || 'Sigue sin poder asignar.', 'warn');
+              }
+            } catch (e) {
+              this.#toast('Error al reintentar: ' + (e?.message || e), 'error');
+            }
+          };
+        }
+        const closeBtn = content.querySelector('#nfc-float-close');
+        if (closeBtn) closeBtn.onclick = close;
+      }
+    } catch (err) {
+      overlay.querySelector('#nfc-status').textContent = 'Error: ' + (err?.message || err);
+    }
+  }
+
+  /**
+   * Re-renderiza la sección de gestión NFC y re-bindea eventos.
+   */
+  #refreshGestionNFC() {
+    // Re-render y rebind sección
+    this.#state.section = 'gestion-nfc';
+    this.render();
+  }
+
+  // ---------- UI helpers: modal confirm y toast ----------
+  /**
+   * Modal de confirmación estilizado (promesa booleana).
+   */
+  async #confirmDialog(title, message, okLabel='Aceptar', cancelLabel='Cancelar') {
+    return new Promise((resolve) => {
+      const modal = document.createElement('div');
+      modal.className = 'app-modal-backdrop';
+      modal.innerHTML = `
+        <div class="app-modal">
+          <div class="app-modal-title">${title}</div>
+          <div class="app-modal-body">${message}</div>
+          <div class="app-modal-actions">
+            <button class="btn btn-ghost" id="modal-cancel">${cancelLabel}</button>
+            <button class="btn" id="modal-ok">${okLabel}</button>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+      const cleanup = () => { try { modal.remove(); } catch {} };
+      modal.querySelector('#modal-cancel').onclick = () => { cleanup(); resolve(false); };
+      modal.querySelector('#modal-ok').onclick = () => { cleanup(); resolve(true); };
+      modal.addEventListener('click', (ev) => { if (ev.target === modal) { cleanup(); resolve(false); } });
+    });
+  }
+
+  /**
+   * Toast minimalista con autocierre.
+   */
+  #toast(text, type='info') {
+    const wrap = document.querySelector('.app-toast-wrap') || (()=>{
+      const w = document.createElement('div');
+      w.className = 'app-toast-wrap';
+      document.body.appendChild(w);
+      return w;
+    })();
+    const el = document.createElement('div');
+    el.className = `app-toast ${type}`;
+    el.textContent = text;
+    wrap.appendChild(el);
+    setTimeout(()=>{ el.classList.add('show'); }, 10);
+    setTimeout(()=>{ el.classList.remove('show'); el.addEventListener('transitionend', ()=> el.remove(), { once: true }); }, 3200);
   }
 
   // ---------- Horario (L-V) ----------
@@ -212,6 +608,9 @@ export class HomeView {
     } catch {}
   }
 
+  /**
+   * Renderiza horario (L-V) con modo mañana/tarde y configuración.
+   */
   #renderHorario() {
     const canEdit = ['professor', 'admin'].includes(this.#user?.role);
     const mode = this.#state.horarioMode || 'manana';
@@ -284,6 +683,9 @@ export class HomeView {
     `;
   }
 
+  /**
+   * Renderiza eventos del día con posicionamiento en cuadrícula temporal.
+   */
   #renderDayEvents(list, startHour){
     const pxPerMin = (this.#cfg.hourHeight||52)/60; // matches --hour-height
     return list.map(ev => {
@@ -297,6 +699,9 @@ export class HomeView {
     }).join('');
   }
 
+  /**
+   * Formulario de alta/edición de asignaturas en el horario.
+   */
   #renderForm(edit=null){
     return `
       <form class="tt-form" id="tt-form" hidden>
@@ -333,6 +738,9 @@ export class HomeView {
     `;
   }
 
+  /**
+   * Eventos para configurar horario y CRUD de asignaturas.
+   */
   #bindHorarioEvents(){
     const canEdit = ['professor', 'admin'].includes(this.#user?.role);
     if (canEdit) {
@@ -400,14 +808,16 @@ export class HomeView {
           if (act==='edit') {
             openForm(ev);
           } else if (act==='del') {
-            if (confirm('¿Eliminar asignatura?')){
+            (async () => {
+              const ok = await this.#confirmDialog('Eliminar asignatura', '¿Eliminar asignatura?', 'Eliminar', 'Cancelar');
+              if (!ok) return;
               const mode = this.#state.horarioMode || 'manana';
               this.#horarios[mode] = (this.#horarios[mode]||[]).filter(x=>x.id!==id);
               this.#horario = this.#horarios[mode];
               this.#saveHorario(mode);
               this.#state.section = 'horario';
               this.render();
-            }
+            })();
           }
         });
       });
@@ -456,10 +866,12 @@ export class HomeView {
 
   // Scroll nativo: no se calcula altura dinámica
 
+  /** Convierte HH:mm a minutos. */
   #toMinutes(hhmm){
     const [h,m] = (hhmm||'08:00').split(':').map(Number);
     return h*60 + (m||0);
   }
+  /** Calcula hora de fin formateada a partir de inicio+duración. */
   #formatEnd(start, duration){
     const endMin = this.#toMinutes(start) + (duration||60);
     const h = Math.floor(endMin/60), m = endMin%60;
@@ -467,6 +879,9 @@ export class HomeView {
   }
 
   // ---------- Config persistence ----------
+  /**
+   * Carga configuración persistida del horario para el modo dado.
+   */
   #loadCfg(mode='manana'){
     try {
       const key = mode==='tarde' ? 'wf_horario_cfg_tarde' : 'wf_horario_cfg_manana';
@@ -480,6 +895,9 @@ export class HomeView {
       }
     } catch { this.#cfg = { startHour: (mode==='tarde'?14:8), endHour: (mode==='tarde'?21:15), hourHeight: 52, slotMinutes: 15 }; }
   }
+  /**
+   * Guarda configuración del horario para el modo dado.
+   */
   #saveCfg(mode='manana'){
     try {
       const key = mode==='tarde' ? 'wf_horario_cfg_tarde' : 'wf_horario_cfg_manana';

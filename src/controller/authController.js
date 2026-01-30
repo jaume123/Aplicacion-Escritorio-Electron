@@ -6,6 +6,11 @@ import { LoginView } from '../view/loginView.js';
 import { AuthModel } from '../model/authModel.js';
 import { HomeController } from './homeController.js';
 
+/**
+ * Controlador de autenticación
+ * - Orquesta LoginView y AuthModel
+ * - Gestiona login/registro y transición a HomeController
+ */
 export class AuthController {
   #view;
   #model;
@@ -15,6 +20,9 @@ export class AuthController {
     this.#model = new AuthModel();
   }
 
+  /**
+   * Renderiza la vista de login y conecta callbacks.
+   */
   init() {
     // Si no hay sesión, mostrar login
     if (!this.#model.isLoggedIn) {
@@ -26,6 +34,9 @@ export class AuthController {
     }
   }
 
+  /**
+   * Maneja el envío de login: valida, guarda preferencia y navega a Home.
+   */
   async #handleLogin(email, password, remember = false) {
     try {
       const result = await this.#model.login(email, password);
@@ -54,12 +65,15 @@ export class AuthController {
     }
   }
 
+  /**
+   * Maneja el envío de registro de alumno y vuelve a la vista de login.
+   */
   async #handleRegister(payload) {
     try {
       const res = await this.#model.registerAlumno(payload);
       if (res?.ok) {
         // Tras registrarse como alumno, volver al login
-        alert('Alumno registrado correctamente. Ya puedes iniciar sesión.');
+        this.#showToast('Alumno registrado correctamente. Ya puedes iniciar sesión.', 'ok');
         this.#view.render();
       }
     } catch (e) {
@@ -70,5 +84,21 @@ export class AuthController {
         el.hidden = false;
       }
     }
+  }
+
+  // Pequeño helper de toast para evitar alert nativo
+  #showToast(text, type='info') {
+    const wrap = document.querySelector('.app-toast-wrap') || (()=>{
+      const w = document.createElement('div');
+      w.className = 'app-toast-wrap';
+      document.body.appendChild(w);
+      return w;
+    })();
+    const el = document.createElement('div');
+    el.className = `app-toast ${type}`;
+    el.textContent = text;
+    wrap.appendChild(el);
+    setTimeout(()=>{ el.classList.add('show'); }, 10);
+    setTimeout(()=>{ el.classList.remove('show'); el.addEventListener('transitionend', ()=> el.remove(), { once: true }); }, 3200);
   }
 }
