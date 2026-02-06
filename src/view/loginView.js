@@ -12,12 +12,12 @@ export class LoginView {
   #onLogin;
   #onRegister;
   #elements = {};
-  #mode = 'login'; // 'login' | 'register'
+  #mode = "login"; // 'login' | 'register'
   #nfcSubscribed = false;
   #nfcHandler = null;
   #nfcLogging = false;
 
-  constructor(rootSelector = '#app') {
+  constructor(rootSelector = "#app") {
     this.#root = document.querySelector(rootSelector);
   }
 
@@ -33,23 +33,29 @@ export class LoginView {
    * Renderiza la tarjeta (login/register), vincula eventos y gestiona NFC.
    */
   render() {
-    if (!this.#root) throw new Error('No se encontró el contenedor raíz #app');
+    if (!this.#root) throw new Error("No se encontró el contenedor raíz #app");
     // Marca el contenedor raíz como modo login para centrar la tarjeta
-    this.#root.classList.add('is-login');
-    const isRegister = this.#mode === 'register';
-    const cardClass = isRegister ? 'login-card register' : 'login-card';
-    const title = isRegister ? 'Crear cuenta (Alumno)' : 'Web Familia · Escritorio';
-    const subtitle = isRegister ? 'Completa tus datos para registrarte' : 'Accede con tu correo y contraseña';
+    this.#root.classList.add("is-login");
+    const isRegister = this.#mode === "register";
+    const cardClass = isRegister ? "login-card register" : "login-card";
+    const title = isRegister
+      ? "Crear cuenta (Alumno)"
+      : "Web Familia · Escritorio";
+    const subtitle = isRegister
+      ? "Completa tus datos para registrarte"
+      : "Accede con tu correo y contraseña";
 
     this.#root.innerHTML = `
-      <section class="${cardClass}" aria-label="${isRegister ? 'Registro' : 'Acceso'}">
+      <section class="${cardClass}" aria-label="${isRegister ? "Registro" : "Acceso"}">
         <div class="header">
           <div class="logo" aria-hidden="true">WF</div>
           <div class="title">${title}</div>
         </div>
-        <p class="subtitle">${subtitle.replace('usuario', 'correo')}</p>
+        <p class="subtitle">${subtitle.replace("usuario", "correo")}</p>
         <form id="login-form" novalidate>
-          ${isRegister ? `
+          ${
+            isRegister
+              ? `
           <div class="form-group">
             <div class="field">
               <input class="input" id="nombre" name="nombre" type="text" placeholder=" " required />
@@ -71,6 +77,13 @@ export class LoginView {
               <span class="focus-bg"></span>
             </div>
           </div>
+             <div class="form-group">
+            <div class="field">
+              <input class="input" id="gmail" name="gmail" type="email" placeholder=" " required />
+              <label class="label" for="gmail">Gmail</label>
+              <span class="focus-bg"></span>
+            </div>
+          </div>
           <div class="form-group">
             <div class="field">
               <input class="input" id="fechaNacimiento" name="fechaNacimiento" type="date" placeholder=" " required />
@@ -78,14 +91,17 @@ export class LoginView {
               <span class="focus-bg"></span>
             </div>
           </div>
-          ` : ''}
+          `
+              : ""
+          }
           <div class="form-group">
             <div class="field">
-              <input class="input" id="email" name="email" type="email" placeholder=" " autocomplete="email" required />
-              <label class="label" for="email">Correo</label>
+              <input class="input" id="username" name="username" type="text" placeholder=" " required />
+              <label class="label" for="username">Nombre de usuario</label>
               <span class="focus-bg"></span>
             </div>
           </div>
+       
           <div class="form-group">
             <div class="field">
               <input class="input" id="password" name="password" type="password" placeholder=" " autocomplete="current-password" required />
@@ -93,7 +109,10 @@ export class LoginView {
               <span class="focus-bg"></span>
             </div>
           </div>
-          ${isRegister ? '' : `
+          ${
+            isRegister
+              ? ""
+              : `
           <div class="form-group options">
             <label class="checkbox switch">
               <input type="checkbox" id="auto-login" />
@@ -101,135 +120,149 @@ export class LoginView {
               <span class="label-text">Guardar inicio de sesión</span>
             </label>
           </div>
-          `}
+          `
+          }
           <div class="actions">
-            ${isRegister ? `
+            ${
+              isRegister
+                ? `
               <button id="btn-submit-register" class="btn btn-primary" type="submit">Crear cuenta</button>
               <button id="btn-back" class="btn btn-secondary" type="button">Volver a Login</button>
-            ` : `
+            `
+                : `
               <button id="btn-login" class="btn btn-primary" type="submit">Iniciar sesión</button>
               <button id="btn-register" class="btn btn-secondary" type="button">Registrarse</button>
-            `}
+            `
+            }
           </div>
-          <div class="helper">${isRegister ? 'Los profesores y admin se crean desde la base de datos.' : 'Pulsa Enter o el botón para iniciar sesión.'}</div>
+          <div class="helper">${isRegister ? "Los profesores y admin se crean desde la base de datos." : "Pulsa Enter o el botón para iniciar sesión."}</div>
           <div id="error" class="error" role="alert" aria-live="polite" hidden></div>
         </form>
       </section>
     `;
 
     // Cache de elementos
-    this.#elements.form = this.#root.querySelector('#login-form');
-    this.#elements.email = this.#root.querySelector('#email');
-    this.#elements.password = this.#root.querySelector('#password');
-    this.#elements.btnLogin = this.#root.querySelector('#btn-login');
-    this.#elements.btnRegister = this.#root.querySelector('#btn-register');
-    this.#elements.btnSubmitRegister = this.#root.querySelector('#btn-submit-register');
-    this.#elements.btnBack = this.#root.querySelector('#btn-back');
-    this.#elements.autoLogin = this.#root.querySelector('#auto-login');
-      // Carga sesión guardada: auto-relleno y opcional auto-login
-      this.#loadSavedSession();
-    this.#elements.error = this.#root.querySelector('#error');
+    this.#elements.form = this.#root.querySelector("#login-form");
+    this.#elements.username = this.#root.querySelector("#username");
+    this.#elements.gmail = this.#root.querySelector("#gmail");
+    this.#elements.password = this.#root.querySelector("#password");
+    this.#elements.btnLogin = this.#root.querySelector("#btn-login");
+    this.#elements.btnRegister = this.#root.querySelector("#btn-register");
+    this.#elements.btnSubmitRegister = this.#root.querySelector(
+      "#btn-submit-register",
+    );
+    this.#elements.btnBack = this.#root.querySelector("#btn-back");
+    this.#elements.autoLogin = this.#root.querySelector("#auto-login");
+    // Carga sesión guardada: auto-relleno y opcional auto-login
+    this.#loadSavedSession();
+    this.#elements.error = this.#root.querySelector("#error");
 
     // Eventos UI → Controller
-    this.#elements.form.addEventListener('submit', (ev) => {
+    this.#elements.form.addEventListener("submit", (ev) => {
       ev.preventDefault();
-      if (this.#mode === 'login') {
-        const email = this.#elements.email.value.trim();
+      if (this.#mode === "login") {
+        const username = this.#elements.username.value.trim();
         const password = this.#elements.password.value.trim();
         const remember = !!this.#elements.autoLogin?.checked;
-        const validation = this.#validateLogin(email, password);
+        const validation = this.#validateLogin(username, password);
         if (!validation.ok) return this.#showError(validation.message);
         this.#clearError();
-        if (typeof this.#onLogin === 'function') this.#onLogin({ email, password, remember });
+        if (typeof this.#onLogin === "function")
+          this.#onLogin({ username, password, remember });
       } else {
         const payload = this.#collectRegisterPayload();
         const validation = this.#validateRegister(payload);
         if (!validation.ok) return this.#showError(validation.message);
         this.#clearError();
-        if (typeof this.#onRegister === 'function') this.#onRegister(payload);
+        if (typeof this.#onRegister === "function") this.#onRegister(payload);
       }
     });
 
     // Enviar con Enter desde contraseña
-    this.#elements.password.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') {
+    this.#elements.password.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
         this.#elements.form.requestSubmit();
       }
     });
 
     if (this.#elements.btnRegister) {
-      this.#elements.btnRegister.addEventListener('click', () => {
-        this.#mode = 'register';
+      this.#elements.btnRegister.addEventListener("click", () => {
+        this.#mode = "register";
         this.render();
       });
     }
     if (this.#elements.btnBack) {
-      this.#elements.btnBack.addEventListener('click', () => {
-        this.#mode = 'login';
+      this.#elements.btnBack.addEventListener("click", () => {
+        this.#mode = "login";
         this.render();
       });
     }
 
     // Animación de entrada de la tarjeta
-    const card = this.#root.querySelector('.login-card');
+    const card = this.#root.querySelector(".login-card");
     if (card) {
       requestAnimationFrame(() => {
-        card.classList.add('mounted');
+        card.classList.add("mounted");
       });
     }
 
     // Efecto luminoso: la "focus-bg" sigue el puntero (mejora visual futurista)
-    this.#root.querySelectorAll('.field').forEach((field) => {
-      const bg = field.querySelector('.focus-bg');
+    this.#root.querySelectorAll(".field").forEach((field) => {
+      const bg = field.querySelector(".focus-bg");
       if (!bg) return;
       const update = (ev) => {
         const rect = field.getBoundingClientRect();
         const x = ((ev.clientX - rect.left) / rect.width) * 100;
         const y = ((ev.clientY - rect.top) / rect.height) * 100;
-        bg.style.setProperty('--x', `${x}%`);
-        bg.style.setProperty('--y', `${y}%`);
+        bg.style.setProperty("--x", `${x}%`);
+        bg.style.setProperty("--y", `${y}%`);
       };
-      field.addEventListener('pointermove', update);
-      field.addEventListener('pointerenter', update);
+      field.addEventListener("pointermove", update);
+      field.addEventListener("pointerenter", update);
     });
 
     // --- INICIO DE SESIÓN AUTOMÁTICO POR NFC (ESCUCHA CONTINUA) ---
     try {
-      const { ipcRenderer } = window.require ? window.require('electron') : {};
+      const { ipcRenderer } = window.require ? window.require("electron") : {};
       if (ipcRenderer) {
         // Si cambiamos a modo registro y había suscripción, limpiar
-        if (this.#mode !== 'login' && this.#nfcSubscribed) {
-          ipcRenderer.send('nfc:detener-escucha');
-          if (this.#nfcHandler) ipcRenderer.removeListener('nfc:uid', this.#nfcHandler);
+        if (this.#mode !== "login" && this.#nfcSubscribed) {
+          ipcRenderer.send("nfc:detener-escucha");
+          if (this.#nfcHandler)
+            ipcRenderer.removeListener("nfc:uid", this.#nfcHandler);
           this.#nfcSubscribed = false;
           this.#nfcHandler = null;
           this.#nfcLogging = false;
         }
 
-        if (this.#mode === 'login' && !this.#nfcSubscribed) {
+        if (this.#mode === "login" && !this.#nfcSubscribed) {
           this.#nfcHandler = async (_event, uid) => {
             if (this.#nfcLogging) return; // evitar reentradas
             this.#nfcLogging = true;
             try {
-              const response = await ipcRenderer.invoke('nfc:login', uid);
+              const response = await ipcRenderer.invoke("nfc:login", uid);
               if (response && response.ok && response.user) {
                 // Registrar entrada/salida
-                await ipcRenderer.invoke('nfc:registrar-entrada-salida', uid);
-                if (typeof this.#onLogin === 'function') {
-                  this.#onLogin({ email: response.user.email, password: response.user.password, remember: false });
+                await ipcRenderer.invoke("nfc:registrar-entrada-salida", uid);
+                if (typeof this.#onLogin === "function") {
+                  this.#onLogin({
+                    email: response.user.email,
+                    password: response.user.password,
+                    remember: false,
+                  });
                 }
               } else {
-                this.#showError('NFC no asociado a ningún usuario.');
+                this.#showError("NFC no asociado a ningún usuario.");
                 this.#nfcLogging = false;
               }
             } catch (err) {
-              this.#showError(err?.message || 'Error en login por NFC');
+              this.#showError(err?.message || "Error en login por NFC");
               this.#nfcLogging = false;
             }
           };
 
-          ipcRenderer.on('nfc:uid', this.#nfcHandler);
-          ipcRenderer.send('nfc:escuchar-login');
+          ipcRenderer.on("nfc:uid", this.#nfcHandler);
+          ipcRenderer.send("nfc:escuchar-login");
           this.#nfcSubscribed = true;
         }
       }
@@ -239,25 +272,22 @@ export class LoginView {
   /** Carga y aplica sesión guardada (email/password) si existe. */
   #loadSavedSession() {
     try {
-      const raw = localStorage.getItem('wf_saved_session');
+      const raw = localStorage.getItem("wf_saved_session");
       if (!raw) return;
       const data = JSON.parse(raw);
       if (data?.email) this.#elements.email.value = data.email;
       if (data?.password) this.#elements.password.value = data.password;
-      if (this.#elements.autoLogin) this.#elements.autoLogin.checked = !!data?.autoLogin;
+      if (this.#elements.autoLogin)
+        this.#elements.autoLogin.checked = !!data?.autoLogin;
       // Solo auto-rellenar; no iniciar sesión automáticamente
     } catch {}
   }
 
   // Validación Login
   /** Valida campos de login. */
-  #validateLogin(email, password) {
-    if (!email || !password) {
-      return { ok: false, message: 'Completa correo y contraseña.' };
-    }
-    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRe.test(email)) {
-      return { ok: false, message: 'El correo no es válido.' };
+  #validateLogin(username, password) {
+    if (!username || !password) {
+      return { ok: false, message: "Completa nombre de usuario y contraseña." };
     }
     return { ok: true };
   }
@@ -265,27 +295,32 @@ export class LoginView {
   // Recolecta datos del formulario de registro
   /** Recolecta campos del formulario de registro. */
   #collectRegisterPayload() {
-    const get = (id) => this.#root.querySelector('#' + id)?.value.trim() || '';
+    const get = (id) => this.#root.querySelector("#" + id)?.value.trim() || "";
     return {
-      nombre: get('nombre'),
-      apellidos: get('apellidos'),
-      dni: get('dni'),
-      fechaNacimiento: get('fechaNacimiento'),
-      email: get('email'),
-      password: get('password'),
+      nombre: get("nombre"),
+      apellidos: get("apellidos"),
+      dni: get("dni"),
+      fechaNacimiento: get("fechaNacimiento"),
+      email: get("gmail"), // Cambiado de 'email' a 'gmail'
+      password: get("password"),
+      username: get("username"),
     };
   }
 
   // Validación Registro
   /** Valida formulario de registro de alumno. */
   #validateRegister(p) {
-    if (!p.nombre || !p.apellidos) return { ok: false, message: 'Nombre y apellidos son obligatorios.' };
+    if (!p.nombre || !p.apellidos)
+      return { ok: false, message: "Nombre y apellidos son obligatorios." };
     const dniRe = /^[0-9]{7,8}[A-Za-z]?$/; // formato básico
-    if (!dniRe.test(p.dni)) return { ok: false, message: 'DNI no válido.' };
-    if (!p.fechaNacimiento) return { ok: false, message: 'Fecha de nacimiento es obligatoria.' };
+    if (!dniRe.test(p.dni)) return { ok: false, message: "DNI no válido." };
+    if (!p.fechaNacimiento)
+      return { ok: false, message: "Fecha de nacimiento es obligatoria." };
     const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRe.test(p.email)) return { ok: false, message: 'El correo no es válido.' };
-    if (!p.password) return { ok: false, message: 'La contraseña es obligatoria.' };
+    if (!emailRe.test(p.email))
+      return { ok: false, message: "El correo no es válido." };
+    if (!p.password)
+      return { ok: false, message: "La contraseña es obligatoria." };
     return { ok: true };
   }
 
@@ -294,21 +329,57 @@ export class LoginView {
   #showError(msg) {
     this.#elements.error.textContent = msg;
     this.#elements.error.hidden = false;
-    this.#elements.error.classList.remove('shake');
+    this.#elements.error.classList.remove("shake");
     // Reinicia animación de sacudida
     void this.#elements.error.offsetWidth;
-    this.#elements.error.classList.add('shake');
+    this.#elements.error.classList.add("shake");
   }
 
   /** Limpia error mostrado. */
   #clearError() {
-    this.#elements.error.textContent = '';
+    this.#elements.error.textContent = "";
     this.#elements.error.hidden = true;
   }
 
   // API pública de la vista, por si se necesita limpiar
   /** Limpia el contenedor raíz. */
   clear() {
-    if (this.#root) this.#root.innerHTML = '';
+    if (this.#root) this.#root.innerHTML = "";
+  }
+
+  /**
+   * Muestra un mensaje emergente con un botón de confirmación.
+   * @param {string} message - Mensaje a mostrar en el popup.
+   * @param {string} type - Tipo de mensaje ('success', 'error', etc.).
+   * @param {Function} onConfirm - Callback al hacer clic en 'OK'.
+   */
+  showPopup(message, type = "info", onConfirm) {
+    console.log("showPopup ejecutado con mensaje:", message); // Log para depuración
+    const popup = document.createElement("div");
+    popup.className = `popup ${type}`;
+    popup.innerHTML = `
+      <div class="popup-content">
+        <p>${message}</p>
+        <button class="btn btn-primary" id="popup-ok">OK</button>
+      </div>
+    `;
+    document.body.appendChild(popup);
+
+    const okButton = popup.querySelector("#popup-ok");
+    okButton.addEventListener("click", () => {
+      console.log("Botón OK presionado"); // Log para depuración
+      popup.remove();
+      if (typeof onConfirm === "function") {
+        onConfirm();
+      }
+    });
+  }
+
+  /**
+   * Cambia al modo login y renderiza la vista.
+   */
+  switchToLogin() {
+    this.#mode = "login";
+    this.render();
   }
 }

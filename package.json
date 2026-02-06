@@ -5,13 +5,16 @@
   "main": "index.js",
   "scripts": {
     "start": "electron .",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "clean": "rimraf dist",
+    "build": "electron-packager . --out=dist --overwrite"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
     "electron": "^38.1.2",
+    "electron-packager": "^17.1.2",
     "electron-rebuild": "^3.2.9"
   },
   "repository": {
@@ -23,7 +26,9 @@
   },
   "homepage": "https://github.com/CarolSastre/Proyecto-provisional-ESCRITORIO#readme",
   "dependencies": {
+    "@pokusew/pcsclite": "^0.6.0",
     "mongodb": "^7.0.0",
-    "nfc-pcsc": "^0.8.1"
+    "nfc-pcsc": "^0.8.1",
+    "node-fetch": "^3.3.2"
   }
 }
