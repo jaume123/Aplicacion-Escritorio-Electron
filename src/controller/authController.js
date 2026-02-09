@@ -27,8 +27,15 @@ export class AuthController {
     // Si no hay sesión, mostrar login
     if (!this.#model.isLoggedIn) {
       this.#view.bind({
-        onLogin: ({ email, password, remember }) =>
-          this.#handleLogin(email, password, remember),
+        // Acepta login normal (dni/password) o directo por NFC (token)
+        onLogin: (payload) => {
+          if (payload?.nfcAuth) {
+            this.#handleNfcLogin(payload.nfcAuth);
+          } else {
+            const { dni, username, email, password, remember } = payload || {};
+            this.#handleLogin(dni || username || email, password, remember);
+          }
+        },
         onRegister: (payload) => {
           payload.gmail = payload.email; // Copiar email a gmail para el registro
           this.#handleRegister(payload);
@@ -41,15 +48,15 @@ export class AuthController {
   /**
    * Maneja el envío de login: valida, guarda preferencia y navega a Home.
    */
-  async #handleLogin(username, password, remember = false) {
+  async #handleLogin(dni, password, remember = false) {
     try {
-      const result = await this.#model.login(username, password);
-      if (result.ok) {
+      const result = await this.#model.login(dni, password);
+      if (result && result.usuario) {
         // Guardar/limpiar sesión recordada según la preferencia
         try {
           if (remember) {
             const payload = {
-              username,
+              dni: dni,
               password,
               autoLogin: true,
               ts: Date.now(),
@@ -60,8 +67,10 @@ export class AuthController {
           }
         } catch {}
         // Navegar a Home/Dashboard según rol (MVC)
-        const home = new HomeController(result.user);
+        const home = new HomeController(result.usuario);
         home.init();
+        // Asegurar que la escucha NFC del login se detiene
+        try { const { ipcRenderer } = window.require ? window.require('electron') : {}; ipcRenderer?.send('nfc:detener-escucha'); } catch {}
       }
     } catch (e) {
       // Re-render y mostrar error simple en la vista
@@ -69,6 +78,24 @@ export class AuthController {
       const el = document.querySelector("#error");
       if (el) {
         el.textContent = e.message || "Error de acceso";
+        el.hidden = false;
+      }
+    }
+  }
+
+  // Maneja sesión directa tras autenticación por NFC (ya con JWT)
+  #handleNfcLogin(auth) {
+    try {
+      const { usuario, token } = auth || {};
+      const sess = this.#model.setSession(usuario, token);
+      const home = new HomeController(sess.usuario);
+      home.init();
+      try { const { ipcRenderer } = window.require ? window.require('electron') : {}; ipcRenderer?.send('nfc:detener-escucha'); } catch {}
+    } catch (e) {
+      this.#view.render();
+      const el = document.querySelector('#error');
+      if (el) {
+        el.textContent = e.message || 'Error en login NFC';
         el.hidden = false;
       }
     }

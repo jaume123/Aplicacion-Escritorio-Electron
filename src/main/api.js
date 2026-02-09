@@ -14,6 +14,10 @@ async function registrarNFC(token) {
 // Cliente de API Spring para el proceso principal de Electron
 // Ajusta BASE_URL y rutas según tu API real
 
+// Asegura disponibilidad de fetch en el proceso main de Electron (Node)
+// Usa el nativo si existe; si no, cae a cross-fetch (CommonJS compatible)
+const fetch = globalThis.fetch || require('cross-fetch');
+
 const BASE_URL = process.env.SPRING_API_URL || 'http://localhost:8080/api';
 const LOGIN_PATH = process.env.SPRING_LOGIN_PATH || '/usuarios/login'; // GET ?email=&password=
 const REGISTER_PATH = process.env.SPRING_REGISTER_PATH || '/alumnos'; // POST JSON body

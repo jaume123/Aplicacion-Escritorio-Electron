@@ -137,7 +137,9 @@ app.on('ready', () => {
         try { found = await usuarios.findOne({ _id: new (require('mongodb').ObjectId)(String(user._id)) }); } catch {}
       }
       if (!found && user.email) {
-        found = await usuarios.findOne({ email: user.email });
+        // Some schemas store email under 'gmail'
+        found = await usuarios.findOne({ gmail: user.email });
+        if (!found) found = await usuarios.findOne({ email: user.email });
       }
       if (found?.nfcToken) return { hasNFC: true };
       // Buscar en nfctokens por userId/email
@@ -162,6 +164,16 @@ app.on('ready', () => {
     }
   });
 
+  // Crear usuario (admin/professor): role = 'alumno' | 'professor'
+  ipcMain.handle('users:create', async (event, payload) => {
+    try {
+      const res = await db.createUserSimple(payload || {});
+      return res;
+    } catch (err) {
+      return { ok: false, error: err.message || 'Error creando usuario' };
+    }
+  });
+
   // Deshabilitar NFC para un usuario
   ipcMain.handle('nfc:disable', async (event, userId) => {
     try {
@@ -175,38 +187,24 @@ app.on('ready', () => {
   // REGISTRO ENTRADA / SALIDA NFC
   // - Alterna 'entrada'/'salida' por usuario al pasar tarjeta
   // ===============================
-  ipcMain.handle('nfc:registrar-entrada-salida', async (event, uid) => {
+  ipcMain.handle('nfc:registrar-entrada-salida', async (event, arg1, arg2) => {
     try {
-      const usuario = await db.getUsuarioByTokenNFC(uid);
-      if (!usuario) {
-        return { ok: false, error: 'NFC no asociado a ningún usuario.' };
+      const ctx = (arg1 && typeof arg1 === 'object' && arg1.uid) ? arg1 : { uid: arg1, userId: arg2 };
+      const headers = { 'Content-Type': 'application/json' };
+      if (ctx.token) headers['Authorization'] = 'Bearer ' + ctx.token;
+      const res = await fetch('http://localhost:8080/api/usuarios/registrar-entrada-salida', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ uid: ctx.uid, userId: ctx.userId })
+      });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+      if (!res.ok) {
+        const msg = (data && (data.error || data.message)) || (text && text.trim()) || `HTTP ${res.status}`;
+        return { ok: false, error: msg };
       }
-
-      const database = await db.connect();
-      const collection = database.collection('registrosEntradaSalida');
-
-      const ultimo = await collection
-        .find({ userId: String(usuario._id) })
-        .sort({ fechaHora: -1 })
-        .limit(1)
-        .toArray();
-
-      let tipo = 'entrada';
-      if (ultimo.length && ultimo[0].tipo === 'entrada') {
-        tipo = 'salida';
-      }
-
-      const registro = {
-        userId: String(usuario._id),
-        nombre: usuario.nombre || '',
-        email: usuario.email || '',
-        fechaHora: new Date(),
-        tipo,
-        uid
-      };
-
-      await collection.insertOne(registro);
-      return { ok: true, registro };
+      return data || { ok: true };
 
     } catch (err) {
       return { ok: false, error: err.message };
@@ -214,11 +212,11 @@ app.on('ready', () => {
   });
 
   // ===============================
-  // LEER NFC Y GUARDAR TOKEN
-  // - Lee una tarjeta NFC y, si hay usuario objetivo, guarda la asociación
+  // LEER NFC Y GUARDAR TOKEN (vía API)
+  // - Lee una tarjeta NFC y, si hay usuario objetivo, delega en la API la asociación
   // - Devuelve { ok, uid } o { ok:false, error, uid } para gestionar conflictos
   // ===============================
-  ipcMain.handle('nfc:leer', async (event, user) => {
+  ipcMain.handle('nfc:leer', async (event, ctx) => {
     return new Promise((resolve, reject) => {
       const nfc = new NFC();
       let finished = false;
@@ -227,9 +225,30 @@ app.on('ready', () => {
 
         reader.once('card', async card => {
           try {
-            // Solo guardar el token si se está asociando desde Home (usuario presente)
-            if (user && (user._id || user.email)) {
-              await db.guardarNFCToken(card.uid, user);
+            // Delegar asignación en API si hay usuario objetivo
+            const user = (ctx && typeof ctx === 'object') ? ctx.user : ctx;
+            const token = (ctx && typeof ctx === 'object') ? ctx.token : null;
+            if (user && (user._id || user.email || user.dni)) {
+              const res = await fetch('http://localhost:8080/api/usuarios/asignar-nfc', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...(token ? { 'Authorization': 'Bearer ' + token } : {}) },
+                body: JSON.stringify({
+                  uid: card.uid,
+                  userId: user._id || undefined,
+                  dni: user.dni || undefined,
+                  gmail: user.email || undefined
+                })
+              });
+              const text = await res.text();
+              let data = null;
+              try { data = text ? JSON.parse(text) : null; } catch {}
+              if (!res.ok) {
+                finished = true;
+                const msg = (data && (data.error || data.message)) || (text && text.trim()) || `HTTP ${res.status}`;
+                resolve({ ok: false, error: msg, uid: card.uid });
+                reader.close();
+                return;
+              }
             }
             finished = true;
             resolve({ ok: true, uid: card.uid });
@@ -266,16 +285,20 @@ app.on('ready', () => {
   // ===============================
   ipcMain.handle('nfc:login', async (event, uid) => {
     try {
-      const usuario = await db.getUsuarioByTokenNFC(uid);
-      if (!usuario) return { ok: false };
-
-      return {
-        ok: true,
-        user: {
-          email: usuario.email,
-          password: usuario.contraseña || usuario.password || ''
-        }
-      };
+      // Delegar autenticación a la API para obtener JWT sin password
+      const res = await fetch('http://localhost:8080/api/usuarios/login-nfc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uid })
+      });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+      if (!res.ok) {
+        const msg = (data && (data.error || data.message)) || (text && text.trim()) || `HTTP ${res.status}`;
+        return { ok: false, error: msg };
+      }
+      return { ok: true, auth: { usuario: data?.usuario, token: data?.token } };
     } catch (err) {
       return { ok: false, error: err.message };
     }
@@ -287,7 +310,55 @@ app.on('ready', () => {
     try {
       const usuario = await db.getUsuarioByTokenNFC(uid);
       if (!usuario) return { ok: false };
-      return { ok: true, user: { _id: String(usuario._id), nombre: usuario.nombre || '', email: usuario.email || '', role: usuario.role || 'alumno' } };
+      const roleRaw = usuario.rol || usuario.role;
+      const role = String(roleRaw||'').toUpperCase()==='ADMIN' ? 'admin' : (String(roleRaw||'').toUpperCase()==='PROFESOR' ? 'professor' : 'alumno');
+      const email = usuario.gmail || usuario.email || '';
+      return { ok: true, user: { _id: String(usuario._id), nombre: usuario.nombre || '', email, role } };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // Listar registros de entrada/salida para un usuario (requiere JWT)
+  ipcMain.handle('nfc:list-registros', async (event, ctx) => {
+    try {
+      const { userId, token, limit } = ctx || {};
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      const url = `http://localhost:8080/api/usuarios/registros?userId=${encodeURIComponent(userId||'')}&limit=${Number(limit||50)}`;
+      const res = await fetch(url, { method: 'GET', headers });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+      if (!res.ok) {
+        const msg = (data && (data.error || data.message)) || (text && text.trim()) || `HTTP ${res.status}`;
+        return { ok: false, error: msg };
+      }
+      return data || { ok: true, registros: [] };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // Admin: actualizar perfil de usuario
+  ipcMain.handle('admin:update-user', async (event, ctx) => {
+    try {
+      const { id, updates, token } = ctx || {};
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      const res = await fetch('http://localhost:8080/api/usuarios/actualizar', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ id, ...updates })
+      });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+      if (!res.ok) {
+        const msg = (data && (data.error || data.message)) || (text && text.trim()) || `HTTP ${res.status}`;
+        return { ok: false, error: msg };
+      }
+      return data || { ok: true };
     } catch (err) {
       return { ok: false, error: err.message };
     }

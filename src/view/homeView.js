@@ -10,6 +10,9 @@ export class HomeView {
   #horario = [];
   #horarios = { manana: [], tarde: [] };
   #cfg = { startHour: 8, endHour: 18, hourHeight: 52, slotMinutes: 15 };
+  #registros = [];
+  #usersList = [];
+  #usersFilter = { role: 'alumno', q: '' };
   // Gestión NFC (estado y filtros)
   #nfcUsers = [];
   #nfcFilter = { role: 'all', status: 'all', q: '' };
@@ -23,7 +26,7 @@ export class HomeView {
     professor: [
       { id: 'mi-perfil', label: 'Mi Perfil' },
       { id: 'asistencias', label: 'Asistencias' },
-      { id: 'alumnos', label: 'Alumnos' },
+      { id: 'alumnos', label: 'Lista Alumnos' },
       { id: 'anadir-evento', label: 'Añadir Evento' },
       { id: 'crear-alumno', label: 'Crear Alumno' },
       { id: 'horario', label: 'Horario' },
@@ -84,6 +87,7 @@ export class HomeView {
               </div>
               <div class="right">
                 <button class="btn btn-ghost nfc" id="btn-nfc" title="Habilitar NFC" anim="sheen">NFC</button>
+                <button class="btn btn-ghost" id="btn-fichar" title="Registrar entrada/salida">Fichar</button>
                 <button class="btn btn-ghost" id="btn-clear-session" title="Borrar sesión guardada">Borrar sesión</button>
                 <button class="btn btn-ghost" id="btn-logout" title="Cerrar sesión">Cerrar sesión</button>
                 <button class="icon more" title="Más" disabled>⋮</button>
@@ -91,7 +95,13 @@ export class HomeView {
             </header>
 
             <section class="panel">
-              ${this.#state.section === 'horario' ? this.#renderHorario() : this.#state.section === 'gestion-nfc' ? this.#renderGestionNFC() : `
+              ${this.#state.section === 'horario' ? this.#renderHorario() :
+                this.#state.section === 'gestion-nfc' ? this.#renderGestionNFC() :
+                this.#state.section === 'asistencias' ? this.#renderAsistencias() :
+                this.#state.section === 'lista-alumnos' ? this.#renderListaUsuarios('alumno') :
+                this.#state.section === 'lista-profesores' ? this.#renderListaUsuarios('professor') :
+                this.#state.section === 'crear-alumno' ? this.#renderCrearUsuario('alumno') :
+                this.#state.section === 'crear-profesor' ? this.#renderCrearUsuario('professor') : `
                 <div class="panel-header">
                   <button class="icon" aria-label="Mes anterior" id="cal-prev">‹</button>
                   <div class="month">${this.#monthLabel()}</div>
@@ -123,7 +133,7 @@ export class HomeView {
           floatMenu.innerHTML = `
             <div class="nfc-float-backdrop"></div>
             <div class="nfc-float-content">
-              <h3>NFC ya habilitado</h3>
+              <h3>NFC ya activado</h3>
               <p>Ya tienes un NFC asignado a tu usuario.</p>
               <button class="btn btn-ghost" id="nfc-float-cancel">Cerrar</button>
             </div>
@@ -159,11 +169,16 @@ export class HomeView {
           return;
         }
         floatMenu.querySelector('#nfc-status').textContent = 'Esperando tarjeta...';
-        const result = await ipcRenderer.invoke('nfc:leer', this.#user);
+        const jwt = (()=>{ try { return localStorage.getItem('wf_jwt'); } catch { return null; } })();
+        const result = await ipcRenderer.invoke('nfc:leer', { user: this.#user, token: jwt });
         if (result && result.ok) {
           floatMenu.querySelector('#nfc-status').textContent = '¡NFC guardado! UID: ' + result.uid;
         } else {
-          floatMenu.querySelector('#nfc-status').textContent = 'No se pudo guardar el NFC.';
+          const msg = (result && result.error) ? String(result.error) : 'No se pudo guardar el NFC.';
+          // Mapear errores comunes a textos más claros
+          let display = msg;
+          if (/409|ya está asignado/i.test(msg)) display = 'Este NFC ya está asignado a otro usuario.';
+          floatMenu.querySelector('#nfc-status').textContent = display;
         }
       } catch (err) {
         document.querySelector('#nfc-status').textContent = 'Error: ' + (err.message || err);
@@ -174,6 +189,50 @@ export class HomeView {
     const next = this.#root.querySelector('#cal-next');
     if (prev) prev.addEventListener('click', () => { this.#shiftMonth(-1); });
     if (next) next.addEventListener('click', () => { this.#shiftMonth(1); });
+
+    const ficharBtn = this.#root.querySelector('#btn-fichar');
+    if (ficharBtn) ficharBtn.addEventListener('click', async () => {
+      try {
+        const { ipcRenderer } = window.require ? window.require('electron') : {};
+        if (!ipcRenderer) return;
+
+        // Dialogo simple
+        const modal = document.createElement('div');
+        modal.className = 'app-modal-backdrop';
+        modal.innerHTML = `
+          <div class="app-modal">
+            <div class="app-modal-title">Fichar</div>
+            <div class="app-modal-body">Acerque su tarjeta al lector para registrar entrada/salida.</div>
+            <div class="app-modal-actions">
+              <button class="btn btn-ghost" id="modal-cancel">Cancelar</button>
+            </div>
+          </div>`;
+        document.body.appendChild(modal);
+        let closed = false; const cleanup = () => { if (!closed){ closed=true; try{ modal.remove(); }catch{} } };
+        modal.querySelector('#modal-cancel').onclick = cleanup;
+        modal.addEventListener('click', (e)=>{ if (e.target===modal) cleanup(); });
+
+        // Leer UID sin asignar
+        const jwt = (()=>{ try { return localStorage.getItem('wf_jwt'); } catch { return null; } })();
+        const scan = await ipcRenderer.invoke('nfc:leer', { user: null, token: jwt });
+        if (!scan || !scan.ok) { this.#toast(scan?.error || 'No se pudo leer la tarjeta.', 'err'); cleanup(); return; }
+        const uid = scan.uid;
+
+        // Registrar E/S reforzando el usuario activo
+        const jwt2 = (()=>{ try { return localStorage.getItem('wf_jwt'); } catch { return null; } })();
+        const res = await ipcRenderer.invoke('nfc:registrar-entrada-salida', { uid, userId: this.#user?._id, token: jwt2 });
+        cleanup();
+        if (!res || !res.ok) { this.#toast(res?.error || 'No se pudo registrar.', 'err'); return; }
+        const tipo = res.registro?.tipo || 'entrada';
+        this.#toast(`Registrada ${tipo}.`, 'ok');
+        if (tipo === 'salida') {
+          // Tras salida, llevar a pantalla de login (logout)
+          try { const mod = await import('../controller/authController.js'); const AuthController = mod.AuthController; const auth = new AuthController(); auth.init(); } catch { window.location.reload(); }
+        }
+      } catch (err) {
+        this.#toast(err?.message || String(err), 'err');
+      }
+    });
 
     const clearBtn = this.#root.querySelector('#btn-clear-session');
     if (clearBtn) clearBtn.addEventListener('click', () => {
@@ -186,6 +245,12 @@ export class HomeView {
     this.#bindMenu();
     if (this.#state.section === 'horario') this.#bindHorarioEvents();
     if (this.#state.section === 'gestion-nfc' && this.#user?.role === 'admin') this.#bindGestionNFC();
+    // Auto-cargar listas si ya estamos en la sección correspondiente
+    if (this.#state.section === 'lista-alumnos' && this.#user?.role === 'admin') this.#loadUsers('alumno');
+    if (this.#state.section === 'lista-profesores' && this.#user?.role === 'admin') this.#loadUsers('professor');
+    if (this.#state.section === 'lista-alumnos' && this.#user?.role === 'professor') this.#loadUsers('alumno');
+    if (this.#state.section === 'crear-alumno') this.#bindCrearUsuario('alumno');
+    if (this.#state.section === 'crear-profesor') this.#bindCrearUsuario('professor');
   }
 
   #monthLabel() {
@@ -251,13 +316,410 @@ export class HomeView {
         } else if (id === 'gestion-nfc' && this.#user?.role === 'admin') {
           this.#state.section = 'gestion-nfc';
           this.render();
+        } else if (id === 'asistencias') {
+          this.#state.section = 'asistencias';
+          this.render();
+          this.#loadRegistros();
+        } else if (id === 'alumnos' && this.#user?.role === 'professor') {
+          this.#state.section = 'lista-alumnos';
+          this.render();
+          this.#loadUsers('alumno');
+        } else if (id === 'lista-alumnos' && this.#user?.role === 'admin') {
+          this.#state.section = 'lista-alumnos';
+          this.render();
+          this.#loadUsers('alumno');
+        } else if (id === 'lista-profesores' && this.#user?.role === 'admin') {
+          this.#state.section = 'lista-profesores';
+          this.render();
+          this.#loadUsers('professor');
+        } else if ((id === 'crear-alumno' && this.#user?.role === 'professor') || (id === 'crear-alumnos' && this.#user?.role === 'admin')) {
+          this.#state.section = 'crear-alumno';
+          this.render();
+        } else if (id === 'crear-profesores' && this.#user?.role === 'admin') {
+          this.#state.section = 'crear-profesor';
+          this.render();
         } else {
           this.#state.section = 'panel';
           if (id !== 'mi-perfil') this.#toast('Sección en construcción: ' + id, 'warn');
           this.render();
         }
+        
       });
     });
+  }
+
+  // ---------- Crear Usuario (Admin/Profesor) ----------
+  #renderCrearUsuario(role='alumno'){
+    const title = role==='professor' ? 'Crear Profesor' : 'Crear Alumno';
+    return `
+      <div class="create-user">
+        <div class="cu-header">
+          <h3>${title}</h3>
+          <p>Introduce los datos para crear un ${role==='professor'?'profesor':'alumno'}.</p>
+        </div>
+        <div class="form-card">
+          <div class="row two">
+            <div><label>Nombre</label><input type="text" id="cu-nombre" placeholder="Nombre"/></div>
+            <div><label>Apellidos</label><input type="text" id="cu-apellidos" placeholder="Apellidos"/></div>
+          </div>
+          <div class="row two">
+            <div><label>DNI</label><input type="text" id="cu-dni" placeholder="DNI"/></div>
+            <div><label>Gmail</label><input type="email" id="cu-email" placeholder="email@dominio.com"/></div>
+          </div>
+          <div class="row two">
+            <div><label>Fecha de nacimiento</label><input type="date" id="cu-fecha"/></div>
+            <div><label>Contraseña</label><input type="password" id="cu-pass" placeholder="Mínimo 6 caracteres"/></div>
+          </div>
+          <div class="row">
+            <button class="btn" id="cu-submit">Crear</button>
+          </div>
+          <div class="row">
+            <small>Si no indicas contraseña, se usará "123456".</small>
+          </div>
+          <div class="row">
+            <div class="field-error" id="cu-error"></div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  #bindCrearUsuario(role='alumno'){
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
+    const dniRe = /^[0-9]{7,8}[A-Za-z]$/;
+    const btn = this.#root.querySelector('#cu-submit');
+    const errEl = this.#root.querySelector('#cu-error');
+    if (!btn) return;
+    btn.addEventListener('click', async ()=>{
+      if (errEl) errEl.textContent='';
+      const nombre = (this.#root.querySelector('#cu-nombre')?.value||'').trim();
+      const apellidos = (this.#root.querySelector('#cu-apellidos')?.value||'').trim();
+      let dni = (this.#root.querySelector('#cu-dni')?.value||'').trim();
+      const email = (this.#root.querySelector('#cu-email')?.value||'').trim().toLowerCase();
+      const fechaNacimiento = (this.#root.querySelector('#cu-fecha')?.value||'').trim();
+      const password = (this.#root.querySelector('#cu-pass')?.value||'').trim();
+      if (!nombre || !apellidos || !email) { if (errEl) errEl.textContent='Nombre, apellidos y email son obligatorios.'; return; }
+      if (!emailRe.test(email)) { if (errEl) errEl.textContent='Email inválido.'; return; }
+      if (dni && !dniRe.test(dni)) { if (errEl) errEl.textContent='DNI inválido.'; return; }
+      if (!fechaNacimiento) { if (errEl) errEl.textContent='Fecha de nacimiento es obligatoria.'; return; }
+      if (password && password.length < 6) { if (errEl) errEl.textContent='La contraseña debe tener al menos 6 caracteres.'; return; }
+      dni = dni ? dni.toUpperCase() : '';
+      try {
+        const { ipcRenderer } = window.require ? window.require('electron') : {};
+        if (!ipcRenderer) return;
+        const res = await ipcRenderer.invoke('users:create', { nombre, apellidos, dni, email, fechaNacimiento, password, role });
+        if (res && res.ok) {
+          this.#toast('Usuario creado correctamente.', 'ok');
+          // Actualizar listas si estamos en sección correspondiente
+          if (role==='alumno') { this.#state.section='lista-alumnos'; this.render(); this.#loadUsers('alumno', true); }
+          else { this.#state.section='lista-profesores'; this.render(); this.#loadUsers('professor', true); }
+        } else {
+          this.#toast(res?.error || 'No se pudo crear el usuario.', 'err');
+          if (errEl) errEl.textContent = res?.error || 'Error creando usuario.';
+        }
+      } catch (e) {
+        this.#toast(e?.message || 'Error creando usuario.', 'err');
+        if (errEl) errEl.textContent = e?.message || 'Error creando usuario.';
+      }
+    });
+  }
+
+  // ---------- Asistencias (registros E/S) ----------
+  #renderAsistencias(){
+    const rows = (this.#registros||[]).map(r=>{
+      const dt = new Date(r.fechaHora);
+      const d = dt.toLocaleDateString('es-ES');
+      const t = dt.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+      const tipo = String(r.tipo||'').toLowerCase();
+      return `<tr><td>${d}</td><td>${t}</td><td class="${tipo==='entrada'?'ok':'warn'}">${tipo}</td><td>${r.uid||''}</td></tr>`;
+    }).join('');
+    return `
+      <div class="asistencias">
+        <div class="panel-header">
+          <h3>Mis fichajes</h3>
+          <button class="btn btn-ghost" id="reload-reg">Recargar</button>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Fecha</th><th>Hora</th><th>Tipo</th><th>UID</th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="4" class="empty">Sin registros</td></tr>'}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  async #loadRegistros(){
+    try {
+      const { ipcRenderer } = window.require ? window.require('electron') : {};
+      if (!ipcRenderer) return;
+      const jwt = (()=>{ try { return localStorage.getItem('wf_jwt'); } catch { return null; } })();
+      const res = await ipcRenderer.invoke('nfc:list-registros', { userId: this.#user?._id, token: jwt, limit: 50 });
+      if (res && res.ok) {
+        this.#registros = res.registros || [];
+        // Re-render sección asistencias para mostrar los datos
+        if (this.#state.section === 'asistencias') this.render();
+      } else {
+        this.#toast(res?.error || 'No se pudieron cargar los registros.', 'err');
+      }
+    } catch (e) {
+      this.#toast(e?.message || 'Error cargando registros.', 'err');
+    }
+  }
+
+  // ---------- Lista Alumnos/Profesores (Admin) ----------
+  #renderListaUsuarios(role='alumno'){
+    this.#usersFilter.role = role;
+    const title = role==='professor' ? 'Lista Profesores' : 'Lista Alumnos';
+    const rows = (this.#usersList||[]).filter(u=>String(u.role||'alumno')===role).filter(u=>{
+      const q = (this.#usersFilter.q||'').toLowerCase();
+      if (!q) return true;
+      return (String(u.nombre||'').toLowerCase().includes(q) || String(u.email||'').toLowerCase().includes(q));
+    }).map(u=>{
+      const has = !!u.nfcToken;
+      return `<div class="user-row" data-id="${u._id}">
+        <div class="user-card small">
+          <div class="avatar" aria-hidden="true"></div>
+          <div class="user-info">
+            <div class="name">${u.nombre||'Usuario'}</div>
+            <div class="email">${u.email||''}</div>
+            <div class="role">Rol: ${u.role||'alumno'}</div>
+          </div>
+        </div>
+        <div class="user-row-status"><span class="status-pill ${has?'ok':'warn'}">${has?'Con NFC':'Sin NFC'}</span></div>
+      </div>`;
+    }).join('');
+    return `
+      <div class="users-admin">
+        <div class="nfc-admin-header">
+          <h3>${title}</h3>
+          <p class="users-count">${rows ? '' : 'Listado filtrado por rol. Usa buscar para localizar.'}</p>
+        </div>
+        <div class="nfc-filters">
+          <div class="row grow">
+            <label>Buscar</label>
+            <input type="search" id="users-filter-q" placeholder="Nombre o email..." />
+          </div>
+        </div>
+        <div id="users-admin-list" class="nfc-admin-list">
+          <div class="loading">Cargando usuarios...</div>
+        </div>
+      </div>
+    `;
+  }
+
+  async #loadUsers(role='alumno', force=false){
+    try {
+      const { ipcRenderer } = window.require ? window.require('electron') : {};
+      if (!ipcRenderer) return;
+      const listEl = this.#root.querySelector('#users-admin-list');
+      if (!listEl) return;
+      if (!this.#usersList.length || force) {
+        const list = await ipcRenderer.invoke('nfc:list-users-with-nfc');
+        this.#usersList = (list||[]).map(u=>({
+          ...u,
+          role: String(u.role||'alumno'),
+          email: u.email || u.gmail || '',
+          apellidos: u.apellidos || '',
+          dni: u.dni || ''
+        }));
+      }
+      this.#usersFilter.role = role;
+      this.#applyUsersFiltersAndRender(listEl);
+      const qInput = this.#root.querySelector('#users-filter-q');
+      if (qInput) { let t=null; qInput.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(()=>{ this.#usersFilter.q = (qInput.value||'').trim().toLowerCase(); this.#applyUsersFiltersAndRender(listEl); }, 180); }); }
+      // Actualizar contador
+      const countEl = this.#root.querySelector('.users-count');
+      if (countEl) {
+        const count = (this.#usersList||[]).filter(u=>String(u.role||'alumno')===role).length;
+        countEl.textContent = `Total: ${count}`;
+      }
+    } catch (e) {
+      const listEl = this.#root.querySelector('#users-admin-list');
+      if (listEl) listEl.innerHTML = '<div class="error">Error cargando usuarios: '+(e?.message||e)+'</div>';
+    }
+  }
+
+  #applyUsersFiltersAndRender(listEl){
+    const role = this.#usersFilter.role;
+    const q = (this.#usersFilter.q||'').toLowerCase();
+    const filtered = (this.#usersList||[]).filter(u=>String(u.role||'alumno')===role).filter(u=>{
+      if (!q) return true; return (String(u.nombre||'').toLowerCase().includes(q) || String(u.email||'').toLowerCase().includes(q));
+    });
+    listEl.innerHTML = this.#renderUserRows(filtered) || '<div class="empty">No hay usuarios.</div>';
+    this.#bindUsersRowActions(listEl);
+  }
+
+  #renderUserRows(users){
+    return (users||[]).map(u=>{
+      const has = !!u.nfcToken;
+      const tokenLabel = has ? `UID: ${u.nfcToken}` : 'Sin NFC';
+      return `
+        <div class="nfc-row" data-id="${u._id}">
+          <div class="nfc-row-info">
+            <div class="user-card small">
+              <div class="avatar" aria-hidden="true"></div>
+              <div class="user-info">
+                <div class="name">${u.nombre || 'Usuario'}</div>
+                <div class="email">${u.email || ''}</div>
+                <div class="role">Rol: ${u.role || 'alumno'}</div>
+                <div class="extra">DNI: ${u.dni || ''}${u.apellidos? ' · Apellidos: '+u.apellidos : ''}</div>
+              </div>
+            </div>
+          </div>
+          <div class="nfc-row-status">
+            <span class="status-pill ${has?'ok':'warn'}">${tokenLabel}</span>
+          </div>
+          ${this.#user?.role==='admin' ? `
+          <div class="nfc-row-actions">
+            <button class="btn btn-ghost" data-act="view">Ver</button>
+            <button class="btn" data-act="edit">Editar</button>
+          </div>
+          ` : ''}
+        </div>`;
+    }).join('');
+  }
+
+  // Bind acciones en listas (ver/editar)
+  #bindUsersRowActions(listEl){
+    listEl.querySelectorAll('.nfc-row .btn').forEach(btn => {
+      btn.addEventListener('click', async (ev) => {
+        const row = ev.currentTarget.closest('.nfc-row');
+        const id = row?.getAttribute('data-id');
+        const act = ev.currentTarget.getAttribute('data-act');
+        const user = (this.#usersList||[]).find(x=>x._id===id);
+        if (!user) return;
+        if (act==='view') {
+          const html = `<b>Nombre:</b> ${user.nombre||''}<br><b>Apellidos:</b> ${user.apellidos||''}<br><b>Email:</b> ${user.email||''}<br><b>DNI:</b> ${user.dni||''}<br><b>Rol:</b> ${user.role||'alumno'}<br>${user.nfcToken?('<b>UID:</b> '+user.nfcToken):''}`;
+          await this.#confirmDialog('Perfil', html, 'Cerrar', 'Cancelar');
+        } else if (act==='edit') {
+          this.#openEditUser(user);
+        }
+      });
+    });
+  }
+
+  #openEditUser(user){
+    const modal = document.createElement('div');
+    modal.className = 'app-modal-backdrop';
+    modal.innerHTML = `
+      <div class="app-modal">
+        <div class="app-modal-title">Editar Perfil</div>
+        <div class="app-modal-body">
+          <div class="row two">
+            <div><label>Nombre</label><input type="text" id="ed-nombre" value="${user.nombre||''}"/></div>
+            <div><label>Apellidos</label><input type="text" id="ed-apellidos" value="${user.apellidos||''}"/></div>
+          </div>
+          <div class="row two">
+            <div class="field-errors"><div class="field-error" id="err-nombre"></div></div>
+            <div class="field-errors"><div class="field-error" id="err-apellidos"></div></div>
+          </div>
+          <div class="row two">
+            <div><label>DNI</label><input type="text" id="ed-dni" value="${user.dni||''}"/></div>
+            <div><label>Email</label><input type="email" id="ed-gmail" value="${user.email||''}"/></div>
+          </div>
+          <div class="row two">
+            <div class="field-errors"><div class="field-error" id="err-dni"></div></div>
+            <div class="field-errors"><div class="field-error" id="err-gmail"></div></div>
+          </div>
+          <div class="row">
+            <label>Rol</label>
+            <select id="ed-rol">
+              <option value="ALUMNO" ${user.role==='alumno'?'selected':''}>Alumno</option>
+              <option value="PROFESOR" ${user.role==='professor'?'selected':''}>Profesor</option>
+              <option value="ADMIN" ${user.role==='admin'?'selected':''}>Admin</option>
+            </select>
+          </div>
+        </div>
+        <div class="app-modal-actions">
+          <button class="btn btn-ghost" id="modal-cancel">Cancelar</button>
+          <button class="btn" id="modal-ok">Guardar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    const cleanup = () => { try { modal.remove(); } catch {} };
+    modal.addEventListener('click', (e)=>{ if (e.target===modal) cleanup(); });
+    modal.querySelector('#modal-cancel').onclick = cleanup;
+    const clearErrors = () => {
+      ['nombre','apellidos','dni','gmail'].forEach(k=>{
+        const el = modal.querySelector('#ed-'+k);
+        const err = modal.querySelector('#err-'+k);
+        if (el) el.style.borderColor = '';
+        if (err) err.textContent = '';
+      });
+    };
+    const validate = () => {
+      clearErrors();
+      let ok = true;
+      const nombre = modal.querySelector('#ed-nombre').value.trim();
+      const apellidos = modal.querySelector('#ed-apellidos').value.trim();
+      let dni = modal.querySelector('#ed-dni').value.trim();
+      const gmail = modal.querySelector('#ed-gmail').value.trim();
+      const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
+      const dniRe = /^[0-9]{7,8}[A-Za-z]$/;
+      if (!nombre) { ok=false; const err = modal.querySelector('#err-nombre'); if (err) err.textContent = 'Nombre es obligatorio.'; const el = modal.querySelector('#ed-nombre'); if (el) el.style.borderColor = '#f66'; }
+      if (!apellidos) { ok=false; const err = modal.querySelector('#err-apellidos'); if (err) err.textContent = 'Apellidos son obligatorios.'; const el = modal.querySelector('#ed-apellidos'); if (el) el.style.borderColor = '#f66'; }
+      if (!dni || !dniRe.test(dni)) { ok=false; const err = modal.querySelector('#err-dni'); if (err) err.textContent = 'DNI inválido (7-8 dígitos + letra).'; const el = modal.querySelector('#ed-dni'); if (el) el.style.borderColor = '#f66'; }
+      if (!gmail || !emailRe.test(gmail)) { ok=false; const err = modal.querySelector('#err-gmail'); if (err) err.textContent = 'Email inválido.'; const el = modal.querySelector('#ed-gmail'); if (el) el.style.borderColor = '#f66'; }
+      return ok;
+    };
+    ['ed-nombre','ed-apellidos','ed-dni','ed-gmail'].forEach(id=>{
+      const el = modal.querySelector('#'+id);
+      if (el) el.addEventListener('input', ()=>{ const k = id.replace('ed-',''); const err = modal.querySelector('#err-'+k); if (err) err.textContent = ''; el.style.borderColor = ''; });
+    });
+    modal.querySelector('#modal-ok').onclick = async () => {
+      if (!validate()) return;
+      const updates = {
+        nombre: modal.querySelector('#ed-nombre').value.trim(),
+        apellidos: modal.querySelector('#ed-apellidos').value.trim(),
+        dni: modal.querySelector('#ed-dni').value.trim().toUpperCase(),
+        gmail: modal.querySelector('#ed-gmail').value.trim(),
+        rol: modal.querySelector('#ed-rol').value,
+      };
+      try {
+        const { ipcRenderer } = window.require ? window.require('electron') : {};
+        const jwt = (()=>{ try { return localStorage.getItem('wf_jwt'); } catch { return null; } })();
+        const res = await ipcRenderer.invoke('admin:update-user', { id: user._id, updates, token: jwt });
+        if (res && res.ok && res.usuario) {
+          // Actualizar en memoria y re-render
+          const roleMap = { ALUMNO:'alumno', PROFESOR:'professor', ADMIN:'admin' };
+          const idx = (this.#usersList||[]).findIndex(x=>x._id===user._id);
+          if (idx>=0) {
+            this.#usersList[idx] = {
+              ...this.#usersList[idx],
+              nombre: res.usuario.nombre,
+              apellidos: res.usuario.apellidos,
+              dni: res.usuario.dni,
+              email: res.usuario.gmail || res.usuario.email,
+              role: roleMap[String(res.usuario.rol||'ALUMNO')] || 'alumno',
+              nfcToken: res.usuario.nfcToken || this.#usersList[idx].nfcToken,
+            };
+          }
+          // Refrescar la lista en vivo sin necesidad de re-navegar
+          const listEl = this.#root.querySelector('#users-admin-list');
+          if (listEl && (this.#state.section==='lista-alumnos' || this.#state.section==='lista-profesores')) {
+            this.#applyUsersFiltersAndRender(listEl);
+            const countEl = this.#root.querySelector('.users-count');
+            if (countEl) {
+              const role = this.#usersFilter.role;
+              const count = (this.#usersList||[]).filter(u=>String(u.role||'alumno')===role).length;
+              countEl.textContent = `Total: ${count}`;
+            }
+          } else {
+            this.render();
+            if (this.#state.section==='lista-alumnos' && this.#user?.role==='admin') this.#loadUsers('alumno');
+            if (this.#state.section==='lista-profesores' && this.#user?.role==='admin') this.#loadUsers('professor');
+          }
+          this.#toast('Perfil actualizado.', 'ok');
+        } else {
+          this.#toast(res?.error || 'No se pudo actualizar.', 'err');
+        }
+      } catch (e) {
+        this.#toast(e?.message || 'Error actualizando.', 'err');
+      } finally {
+        cleanup();
+      }
+    };
   }
 
   // ---------- Gestión de NFC (Admin) ----------
@@ -430,7 +892,8 @@ export class HomeView {
     overlay.querySelector('#nfc-float-cancel').onclick = () => overlay.remove();
     overlay.querySelector('.nfc-float-backdrop').onclick = () => overlay.remove();
     try {
-      const res = await ipcRenderer.invoke('nfc:leer', { _id: user._id, email: user.email, nombre: user.nombre });
+      const jwt = (()=>{ try { return localStorage.getItem('wf_jwt'); } catch { return null; } })();
+      const res = await ipcRenderer.invoke('nfc:leer', { user: { _id: user._id, email: user.email, nombre: user.nombre }, token: jwt });
       if (res?.ok) {
         overlay.querySelector('#nfc-status').textContent = `Asignado UID: ${res.uid}`;
         setTimeout(()=> overlay.remove(), 1200);
@@ -492,7 +955,8 @@ export class HomeView {
                   if (!uidTarget || uidNow !== uidTarget) return;
                   done = true;
                   try {
-                    const re = await ipcRenderer.invoke('nfc:leer', { _id: user._id, email: user.email, nombre: user.nombre });
+                    const jwt2 = (()=>{ try { return localStorage.getItem('wf_jwt'); } catch { return null; } })();
+                    const re = await ipcRenderer.invoke('nfc:leer', { user: { _id: user._id, email: user.email, nombre: user.nombre }, token: jwt2 });
                     if (re?.ok) {
                       content.querySelector('#nfc-status').innerHTML = `Asignado UID: ${re.uid}`;
                       setTimeout(()=> overlay.remove(), 1200);
@@ -520,7 +984,8 @@ export class HomeView {
         if (retryBtn) {
           retryBtn.onclick = async () => {
             try {
-              const re = await ipcRenderer.invoke('nfc:leer', { _id: user._id, email: user.email, nombre: user.nombre });
+              const jwt3 = (()=>{ try { return localStorage.getItem('wf_jwt'); } catch { return null; } })();
+              const re = await ipcRenderer.invoke('nfc:leer', { user: { _id: user._id, email: user.email, nombre: user.nombre }, token: jwt3 });
               if (re?.ok) {
                 content.querySelector('#nfc-status').innerHTML = `Asignado UID: ${re.uid}`;
                 setTimeout(()=> overlay.remove(), 1200);

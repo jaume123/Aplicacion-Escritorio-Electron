@@ -27,6 +27,7 @@
   "homepage": "https://github.com/CarolSastre/Proyecto-provisional-ESCRITORIO#readme",
   "dependencies": {
     "@pokusew/pcsclite": "^0.6.0",
+    "cross-fetch": "^4.1.0",
     "mongodb": "^7.0.0",
     "nfc-pcsc": "^0.8.1",
     "node-fetch": "^3.3.2"

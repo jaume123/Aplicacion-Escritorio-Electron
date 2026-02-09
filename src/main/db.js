@@ -232,12 +232,27 @@ async function guardarNFCToken(uid, user) {
 /**
  * Lista usuarios con un subconjunto de campos útil para la sección admin NFC.
  */
+function normalizeRole(raw) {
+  const up = String(raw || '').toUpperCase();
+  if (up === 'PROFESOR' || up === 'PROFESSOR') return 'professor';
+  if (up === 'ADMIN') return 'admin';
+  return 'alumno';
+}
+
 async function listAllUsersSimple() {
   const database = await connect();
   const usuarios = database.collection(COLLECTION_USUARIOS);
-  const cur = usuarios.find({}, { projection: { email: 1, nombre: 1, role: 1, nfcToken: 1 } });
+  const cur = usuarios.find({}, { projection: { gmail: 1, email: 1, nombre: 1, apellidos: 1, dni: 1, rol: 1, role: 1, nfcToken: 1 } });
   const list = await cur.toArray();
-  return list.map(u => ({ _id: String(u._id), email: u.email, nombre: u.nombre, role: u.role || 'alumno', nfcToken: u.nfcToken || null }));
+  return list.map(u => ({
+    _id: String(u._id),
+    email: u.gmail || u.email,
+    nombre: u.nombre,
+    apellidos: u.apellidos || '',
+    dni: u.dni || '',
+    role: normalizeRole(u.rol || u.role),
+    nfcToken: u.nfcToken || null,
+  }));
 }
 
 /**
@@ -263,6 +278,41 @@ module.exports = {
   connect,
   login,
   registerAlumno,
+  /**
+   * Crea usuario simple (admin/professor) con validación mínima.
+   * Campos: nombre, apellidos, dni (opcional), email, role ('alumno'|'professor').
+   * contraseña: si no se indica, se genera '123456'.
+   */
+  async createUserSimple(payload) {
+    const database = await connect();
+    const usuarios = database.collection(COLLECTION_USUARIOS);
+    const email = String(payload?.email || '').trim().toLowerCase();
+    const nombre = String(payload?.nombre || '').trim();
+    const apellidos = String(payload?.apellidos || '').trim();
+    const dni = String(payload?.dni || '').trim().toUpperCase();
+    const role = String(payload?.role || 'alumno').toLowerCase();
+    const password = String(payload?.password || '123456');
+    const fechaNacimiento = String(payload?.fechaNacimiento || '').trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Email inválido.');
+    if (!nombre) throw new Error('Nombre es obligatorio.');
+    if (!apellidos) throw new Error('Apellidos son obligatorios.');
+    if (password.length < 6) throw new Error('La contraseña debe tener al menos 6 caracteres.');
+    const existing = await usuarios.findOne(ciEmailQuery(email));
+    if (existing) throw new Error('El usuario ya existe.');
+    const doc = {
+      email,
+      gmail: email,
+      contraseña: password,
+      role: role === 'professor' ? 'professor' : 'alumno',
+      nombre,
+      apellidos,
+      dni: dni || undefined,
+      fechaNacimiento: fechaNacimiento || undefined,
+      createdAt: new Date(),
+    };
+    const res = await usuarios.insertOne(doc);
+    return { ok: true, id: String(res.insertedId) };
+  },
   asignarTokenNFC,
   getUsuarioByTokenNFC,
   registrarNFC,

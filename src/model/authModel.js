@@ -21,22 +21,35 @@ export class AuthModel {
     }
   }
 
-  async login(username, password) {
-    const usernameNorm = String(username || "").trim();
+  async login(dni, password) {
+    const dniNorm = String(dni || "").trim().toUpperCase();
     const pass = String(password || "").trim();
-    if (!usernameNorm || !pass) throw new Error("Credenciales inválidas");
+    if (!dniNorm || !pass) throw new Error("Credenciales inválidas");
     try {
       const response = await fetch("http://localhost:8080/api/usuarios/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: usernameNorm, password: pass }),
+        body: JSON.stringify({ dni: dniNorm, password: pass }),
       });
       const result = await response.json();
       if (response.ok) {
         this.#isLoggedIn = true;
-        this.#user = result.usuario;
+        // Normaliza el usuario que llega de la API (nombres de campos y rol)
+        const raw = result.usuario || {};
+        const roleMap = {
+          ALUMNO: "alumno",
+          PROFESOR: "professor",
+          ADMIN: "admin",
+        };
+        const normalized = {
+          ...raw,
+          email: raw.gmail || raw.email || "",
+          role: roleMap[String(raw.rol || raw.role || "").toUpperCase()] || String(raw.rol || raw.role || "alumno").toLowerCase(),
+        };
+        this.#user = normalized;
         this.#token = result.token; // Almacenar el token
-        return result;
+        try { localStorage.setItem('wf_jwt', String(this.#token||'')); } catch {}
+        return { ...result, usuario: normalized };
       }
       throw new Error(result.error || "Error de acceso");
     } catch (err) {
@@ -63,6 +76,22 @@ export class AuthModel {
       }
     }
     return response.json();
+  }
+
+  // Permite fijar sesión desde un token (por ejemplo, login NFC)
+  setSession(user, token) {
+    const raw = user || {};
+    const roleMap = { ALUMNO: 'alumno', PROFESOR: 'professor', ADMIN: 'admin' };
+    const normalized = {
+      ...raw,
+      email: raw.gmail || raw.email || '',
+      role: roleMap[String(raw.rol || raw.role || '').toUpperCase()] || String(raw.rol || raw.role || 'alumno').toLowerCase(),
+    };
+    this.#isLoggedIn = true;
+    this.#user = normalized;
+    this.#token = token || null;
+    try { localStorage.setItem('wf_jwt', String(this.#token||'')); } catch {}
+    return { usuario: normalized, token: this.#token };
   }
 
   async registerAlumno(payload) {
@@ -104,5 +133,7 @@ export class AuthModel {
   logout() {
     this.#isLoggedIn = false;
     this.#user = null;
+    this.#token = null;
+    try { localStorage.removeItem('wf_jwt'); } catch {}
   }
 }

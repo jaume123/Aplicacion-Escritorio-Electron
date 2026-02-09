@@ -43,7 +43,7 @@ export class LoginView {
       : "Web Familia · Escritorio";
     const subtitle = isRegister
       ? "Completa tus datos para registrarte"
-      : "Accede con tu correo y contraseña";
+      : "Accede con tu DNI y contraseña";
 
     this.#root.innerHTML = `
       <section class="${cardClass}" aria-label="${isRegister ? "Registro" : "Acceso"}">
@@ -94,13 +94,19 @@ export class LoginView {
           `
               : ""
           }
+          ${
+            isRegister
+              ? ""
+              : `
           <div class="form-group">
             <div class="field">
-              <input class="input" id="username" name="username" type="text" placeholder=" " required />
-              <label class="label" for="username">Nombre de usuario</label>
+              <input class="input" id="dni" name="dni" type="text" placeholder=" " required />
+              <label class="label" for="dni">DNI</label>
               <span class="focus-bg"></span>
             </div>
           </div>
+          `
+          }
        
           <div class="form-group">
             <div class="field">
@@ -143,7 +149,7 @@ export class LoginView {
 
     // Cache de elementos
     this.#elements.form = this.#root.querySelector("#login-form");
-    this.#elements.username = this.#root.querySelector("#username");
+    this.#elements.dni = this.#root.querySelector("#dni");
     this.#elements.gmail = this.#root.querySelector("#gmail");
     this.#elements.password = this.#root.querySelector("#password");
     this.#elements.btnLogin = this.#root.querySelector("#btn-login");
@@ -161,14 +167,14 @@ export class LoginView {
     this.#elements.form.addEventListener("submit", (ev) => {
       ev.preventDefault();
       if (this.#mode === "login") {
-        const username = this.#elements.username.value.trim();
+        const dni = this.#elements.dni.value.trim();
         const password = this.#elements.password.value.trim();
         const remember = !!this.#elements.autoLogin?.checked;
-        const validation = this.#validateLogin(username, password);
+        const validation = this.#validateLogin(dni, password);
         if (!validation.ok) return this.#showError(validation.message);
         this.#clearError();
         if (typeof this.#onLogin === "function")
-          this.#onLogin({ username, password, remember });
+          this.#onLogin({ dni, password, remember });
       } else {
         const payload = this.#collectRegisterPayload();
         const validation = this.#validateRegister(payload);
@@ -241,18 +247,16 @@ export class LoginView {
             this.#nfcLogging = true;
             try {
               const response = await ipcRenderer.invoke("nfc:login", uid);
-              if (response && response.ok && response.user) {
-                // Registrar entrada/salida
-                await ipcRenderer.invoke("nfc:registrar-entrada-salida", uid);
+              if (response && response.ok && response.auth) {
+                // Registrar entrada/salida y continuar con sesión directa
+                const jwt = (()=>{ try { return localStorage.getItem('wf_jwt'); } catch { return null; } })();
+                await ipcRenderer.invoke("nfc:registrar-entrada-salida", { uid, token: jwt });
                 if (typeof this.#onLogin === "function") {
-                  this.#onLogin({
-                    email: response.user.email,
-                    password: response.user.password,
-                    remember: false,
-                  });
+                  this.#onLogin({ nfcAuth: response.auth });
                 }
               } else {
-                this.#showError("NFC no asociado a ningún usuario.");
+                const msg = response?.error || "NFC no asociado a ningún usuario.";
+                this.#showError(msg);
                 this.#nfcLogging = false;
               }
             } catch (err) {
@@ -275,8 +279,8 @@ export class LoginView {
       const raw = localStorage.getItem("wf_saved_session");
       if (!raw) return;
       const data = JSON.parse(raw);
-      if (data?.email) this.#elements.email.value = data.email;
-      if (data?.password) this.#elements.password.value = data.password;
+      if (data?.dni && this.#elements.dni) this.#elements.dni.value = data.dni;
+      if (data?.password && this.#elements.password) this.#elements.password.value = data.password;
       if (this.#elements.autoLogin)
         this.#elements.autoLogin.checked = !!data?.autoLogin;
       // Solo auto-rellenar; no iniciar sesión automáticamente
@@ -285,9 +289,9 @@ export class LoginView {
 
   // Validación Login
   /** Valida campos de login. */
-  #validateLogin(username, password) {
-    if (!username || !password) {
-      return { ok: false, message: "Completa nombre de usuario y contraseña." };
+  #validateLogin(dni, password) {
+    if (!dni || !password) {
+      return { ok: false, message: "Introduce DNI y contraseña." };
     }
     return { ok: true };
   }
@@ -303,7 +307,6 @@ export class LoginView {
       fechaNacimiento: get("fechaNacimiento"),
       email: get("gmail"), // Cambiado de 'email' a 'gmail'
       password: get("password"),
-      username: get("username"),
     };
   }
 
@@ -355,23 +358,29 @@ export class LoginView {
    */
   showPopup(message, type = "info", onConfirm) {
     console.log("showPopup ejecutado con mensaje:", message); // Log para depuración
-    const popup = document.createElement("div");
-    popup.className = `popup ${type}`;
-    popup.innerHTML = `
-      <div class="popup-content">
-        <p>${message}</p>
-        <button class="btn btn-primary" id="popup-ok">OK</button>
+    // Usa el mismo modal estilizado que el Home para coherencia visual
+    const backdrop = document.createElement("div");
+    backdrop.className = "app-modal-backdrop";
+    backdrop.innerHTML = `
+      <div class="app-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="app-modal-title" id="modal-title">Registro completado</div>
+        <div class="app-modal-body">${message}</div>
+        <div class="app-modal-actions">
+          <button class="btn" id="modal-ok">Ir al login</button>
+        </div>
       </div>
     `;
-    document.body.appendChild(popup);
+    document.body.appendChild(backdrop);
 
-    const okButton = popup.querySelector("#popup-ok");
-    okButton.addEventListener("click", () => {
-      console.log("Botón OK presionado"); // Log para depuración
-      popup.remove();
-      if (typeof onConfirm === "function") {
-        onConfirm();
-      }
+    const cleanup = () => { try { backdrop.remove(); } catch {} };
+    const okBtn = backdrop.querySelector("#modal-ok");
+    okBtn?.addEventListener("click", () => {
+      cleanup();
+      if (typeof onConfirm === "function") onConfirm();
+    });
+    // Cerrar al hacer click fuera del cuadro
+    backdrop.addEventListener("click", (ev) => {
+      if (ev.target === backdrop) cleanup();
     });
   }
 
