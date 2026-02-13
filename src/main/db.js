@@ -242,7 +242,7 @@ function normalizeRole(raw) {
 async function listAllUsersSimple() {
   const database = await connect();
   const usuarios = database.collection(COLLECTION_USUARIOS);
-  const cur = usuarios.find({}, { projection: { gmail: 1, email: 1, nombre: 1, apellidos: 1, dni: 1, rol: 1, role: 1, nfcToken: 1 } });
+  const cur = usuarios.find({}, { projection: { gmail: 1, email: 1, nombre: 1, apellidos: 1, dni: 1, rol: 1, role: 1, nfcToken: 1, fotoPerfil: 1 } });
   const list = await cur.toArray();
   return list.map(u => ({
     _id: String(u._id),
@@ -252,6 +252,7 @@ async function listAllUsersSimple() {
     dni: u.dni || '',
     role: normalizeRole(u.rol || u.role),
     nfcToken: u.nfcToken || null,
+    fotoPerfil: u.fotoPerfil || null,
   }));
 }
 

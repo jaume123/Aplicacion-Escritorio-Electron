@@ -1,5 +1,6 @@
 import { HomeView } from '../view/homeView.js';
 import { LoadingView } from '../view/loadingView.js';
+import { AuthModel } from '../model/authModel.js';
 
 /**
  * Controlador de la pantalla principal (Home)
@@ -63,6 +64,8 @@ export class HomeController {
       });
       const ok = await confirmLogout();
       if (!ok) return;
+      // Registrar salida de la sesión cuando el usuario cierra sesión explícitamente
+      AuthModel.registrarAccesoAppForUser(this.#user, 'salida');
       import('./authController.js').then(({ AuthController }) => {
         const auth = new AuthController();
         auth.init();
@@ -75,6 +78,14 @@ export class HomeController {
     if (!window.__wfLogoutBound) {
       document.addEventListener('click', handler);
       window.__wfLogoutBound = true;
+    }
+
+    // Registrar salida también cuando el usuario cierra la ventana de la app
+    if (!window.__wfUnloadBound) {
+      window.addEventListener('beforeunload', () => {
+        AuthModel.registrarAccesoAppForUser(this.#user, 'salida');
+      });
+      window.__wfUnloadBound = true;
     }
   }
 }

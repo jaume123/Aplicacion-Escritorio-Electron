@@ -1,3 +1,6 @@
+import { AuthModel } from '../model/authModel.js';
+import { EventsModel } from '../model/eventsModel.js';
+
 export class HomeView {
   #root;
   #user;
@@ -10,6 +13,10 @@ export class HomeView {
   #horario = [];
   #horarios = { manana: [], tarde: [] };
   #cfg = { startHour: 8, endHour: 18, hourHeight: 52, slotMinutes: 15 };
+  #events = []; // Eventos de calendario (mes actual)
+  #eventsLoaded = false;
+  #eventsYear = null;
+  #eventsMonth = null;
   #registros = [];
   #usersList = [];
   #usersFilter = { role: 'alumno', q: '' };
@@ -19,6 +26,7 @@ export class HomeView {
   #menuItems = {
     alumno: [
       { id: 'mi-perfil', label: 'Mi Perfil' },
+      { id: 'calendario', label: 'Calendario' },
       { id: 'asistencias', label: 'Asistencias' },
       { id: 'horario', label: 'Horario' },
       { id: 'contactar', label: 'Contactar' },
@@ -35,6 +43,7 @@ export class HomeView {
     admin: [
       { id: 'mi-perfil', label: 'Mi Perfil' },
       { id: 'asistencias', label: 'Asistencias' },
+      { id: 'anadir-evento', label: 'Añadir Evento' },
       { id: 'crear-alumnos', label: 'Crear Alumnos' },
       { id: 'crear-profesores', label: 'Crear Profesores' },
       { id: 'gestion-nfc', label: 'Gestión de NFC' },
@@ -65,7 +74,7 @@ export class HomeView {
         <div class="menu-layout">
           <aside class="sidebar">
             <div class="user-card">
-              <div class="avatar" aria-hidden="true"></div>
+              <div class="avatar avatar-main" aria-hidden="true"></div>
               <div class="user-info">
                 <div class="name">${this.#user.nombre || 'Usuario'}</div>
                 <div class="email">${this.#user.email}</div>
@@ -80,14 +89,13 @@ export class HomeView {
           <main class="content">
             <header class="topbar">
               <div class="left">
-                <h2>${this.#state.section === 'horario' ? 'Horario' : 'Panel'}</h2>
+                <h2>${this.#state.section === 'horario' ? 'Horario' : (this.#state.section === 'perfil' ? 'Mi Perfil' : 'Panel')}</h2>
               </div>
               <div class="center">
                 <input class="search" type="search" placeholder="Buscar..." aria-label="Buscar" disabled>
               </div>
               <div class="right">
                 <button class="btn btn-ghost nfc" id="btn-nfc" title="Habilitar NFC" anim="sheen">NFC</button>
-                <button class="btn btn-ghost" id="btn-fichar" title="Registrar entrada/salida">Fichar</button>
                 <button class="btn btn-ghost" id="btn-clear-session" title="Borrar sesión guardada">Borrar sesión</button>
                 <button class="btn btn-ghost" id="btn-logout" title="Cerrar sesión">Cerrar sesión</button>
                 <button class="icon more" title="Más" disabled>⋮</button>
@@ -95,7 +103,8 @@ export class HomeView {
             </header>
 
             <section class="panel">
-              ${this.#state.section === 'horario' ? this.#renderHorario() :
+              ${this.#state.section === 'perfil' ? this.#renderPerfil() :
+                this.#state.section === 'horario' ? this.#renderHorario() :
                 this.#state.section === 'gestion-nfc' ? this.#renderGestionNFC() :
                 this.#state.section === 'asistencias' ? this.#renderAsistencias() :
                 this.#state.section === 'lista-alumnos' ? this.#renderListaUsuarios('alumno') :
@@ -116,6 +125,9 @@ export class HomeView {
         </div>
       </section>
     `;
+
+    // Aplicar avatar personalizado si existe
+    this.#applyAvatarFromStorage();
 
     // Listeners: NFC placeholder, navegación de calendario y menú
     const nfcBtn = this.#root.querySelector('#btn-nfc');
@@ -190,49 +202,32 @@ export class HomeView {
     if (prev) prev.addEventListener('click', () => { this.#shiftMonth(-1); });
     if (next) next.addEventListener('click', () => { this.#shiftMonth(1); });
 
-    const ficharBtn = this.#root.querySelector('#btn-fichar');
-    if (ficharBtn) ficharBtn.addEventListener('click', async () => {
-      try {
-        const { ipcRenderer } = window.require ? window.require('electron') : {};
-        if (!ipcRenderer) return;
-
-        // Dialogo simple
-        const modal = document.createElement('div');
-        modal.className = 'app-modal-backdrop';
-        modal.innerHTML = `
-          <div class="app-modal">
-            <div class="app-modal-title">Fichar</div>
-            <div class="app-modal-body">Acerque su tarjeta al lector para registrar entrada/salida.</div>
-            <div class="app-modal-actions">
-              <button class="btn btn-ghost" id="modal-cancel">Cancelar</button>
-            </div>
-          </div>`;
-        document.body.appendChild(modal);
-        let closed = false; const cleanup = () => { if (!closed){ closed=true; try{ modal.remove(); }catch{} } };
-        modal.querySelector('#modal-cancel').onclick = cleanup;
-        modal.addEventListener('click', (e)=>{ if (e.target===modal) cleanup(); });
-
-        // Leer UID sin asignar
-        const jwt = (()=>{ try { return localStorage.getItem('wf_jwt'); } catch { return null; } })();
-        const scan = await ipcRenderer.invoke('nfc:leer', { user: null, token: jwt });
-        if (!scan || !scan.ok) { this.#toast(scan?.error || 'No se pudo leer la tarjeta.', 'err'); cleanup(); return; }
-        const uid = scan.uid;
-
-        // Registrar E/S reforzando el usuario activo
-        const jwt2 = (()=>{ try { return localStorage.getItem('wf_jwt'); } catch { return null; } })();
-        const res = await ipcRenderer.invoke('nfc:registrar-entrada-salida', { uid, userId: this.#user?._id, token: jwt2 });
-        cleanup();
-        if (!res || !res.ok) { this.#toast(res?.error || 'No se pudo registrar.', 'err'); return; }
-        const tipo = res.registro?.tipo || 'entrada';
-        this.#toast(`Registrada ${tipo}.`, 'ok');
-        if (tipo === 'salida') {
-          // Tras salida, llevar a pantalla de login (logout)
-          try { const mod = await import('../controller/authController.js'); const AuthController = mod.AuthController; const auth = new AuthController(); auth.init(); } catch { window.location.reload(); }
-        }
-      } catch (err) {
-        this.#toast(err?.message || String(err), 'err');
+    // Clicks en calendario: crear/editar/ver eventos
+    if (this.#state.section === 'panel') {
+      const cal = this.#root.querySelector('.calendar');
+      if (cal) {
+        cal.addEventListener('click', (ev) => {
+          const target = ev.target.closest('.cal-event');
+          const more = ev.target.closest('.cal-more-events');
+          const cell = ev.target.closest('.cal-cell');
+          const date = cell?.getAttribute('data-date');
+          if (!date) return;
+          if (target) {
+            const id = target.getAttribute('data-id');
+            const evObj = (this.#events||[]).find(e => e.id === id);
+            if (!evObj) return;
+            const canEdit = ['professor', 'admin'].includes(this.#user?.role);
+            this.#openEventModal(evObj, { mode: canEdit ? 'edit' : 'view' });
+          } else if (more) {
+            this.#openDayEventsModal(date);
+          } else {
+            // Click en día vacío (o zona libre del día): solo profes/admin pueden crear
+            if (!['professor','admin'].includes(this.#user?.role)) return;
+            this.#openEventModal({ date }, { mode: 'create' });
+          }
+        });
       }
-    });
+    }
 
     const clearBtn = this.#root.querySelector('#btn-clear-session');
     if (clearBtn) clearBtn.addEventListener('click', () => {
@@ -243,6 +238,7 @@ export class HomeView {
     });
 
     this.#bindMenu();
+    if (this.#state.section === 'perfil') this.#bindPerfil();
     if (this.#state.section === 'horario') this.#bindHorarioEvents();
     if (this.#state.section === 'gestion-nfc' && this.#user?.role === 'admin') this.#bindGestionNFC();
     // Auto-cargar listas si ya estamos en la sección correspondiente
@@ -251,6 +247,16 @@ export class HomeView {
     if (this.#state.section === 'lista-alumnos' && this.#user?.role === 'professor') this.#loadUsers('alumno');
     if (this.#state.section === 'crear-alumno') this.#bindCrearUsuario('alumno');
     if (this.#state.section === 'crear-profesor') this.#bindCrearUsuario('professor');
+
+    if (this.#state.section === 'panel') {
+      const needsLoad = !this.#eventsLoaded ||
+        this.#eventsYear !== this.#state.year ||
+        this.#eventsMonth !== this.#state.month;
+      if (needsLoad) {
+        this.#eventsLoaded = true;
+        this.#loadMonthEvents();
+      }
+    }
   }
 
   #monthLabel() {
@@ -258,6 +264,322 @@ export class HomeView {
     const month = date.toLocaleString('es-ES', { month: 'long' });
     const label = month.charAt(0).toUpperCase() + month.slice(1);
     return `${label} ${this.#state.year}`;
+  }
+
+  #applyAvatarFromStorage() {
+    try {
+      const u = this.#user || {};
+      const keyBase = u._id || u.id || u.dni || 'default';
+      const storageKey = 'wf_avatar_' + keyBase;
+      // Prioridad: fotoPerfil recibida desde la API; fallback: localStorage
+      let data = u.fotoPerfil || null;
+      if (!data) {
+        data = localStorage.getItem(storageKey);
+      }
+      if (!data) return;
+      const targets = [];
+      if (this.#root) {
+        this.#root.querySelectorAll('.avatar-main, .profile-avatar').forEach(el => targets.push(el));
+      }
+      targets.forEach(el => {
+        el.style.backgroundImage = `url(${data})`;
+        el.style.backgroundSize = 'cover';
+        el.style.backgroundPosition = 'center';
+      });
+    } catch {}
+  }
+
+  // ---------- Mi Perfil ----------
+  #renderPerfil() {
+    const rawRole = this.#user?.role || 'alumno';
+    const roleLabel = rawRole;
+    const email = this.#user?.email || this.#user?.gmail || '';
+    const dni = this.#user?.dni || '';
+    const nombre = this.#user?.nombre || '';
+    const apellidos = this.#user?.apellidos || '';
+    const rolePrettyMap = { alumno: 'Alumno', professor: 'Profesor', admin: 'Administrador' };
+    const rolePretty = rolePrettyMap[roleLabel] || 'Alumno';
+    let roleDesc = '';
+    if (roleLabel === 'alumno') roleDesc = 'Eres un alumno del centro y puedes consultar tu calendario, tus asistencias y tu horario.';
+    else if (roleLabel === 'professor') roleDesc = 'Eres un profesor: además de ver tu información, puedes gestionar alumnos, eventos y asistencias.';
+    else if (roleLabel === 'admin') roleDesc = 'Eres administrador: tienes acceso completo a la gestión de usuarios, NFC y eventos.';
+    return `
+      <div class="profile-view">
+        <div class="profile-card">
+          <div class="profile-avatar-wrapper">
+            <div class="profile-avatar" id="perfil-avatar" aria-label="Foto de perfil" role="button" tabindex="0"></div>
+          </div>
+          <div class="profile-main">
+            <h3 class="profile-name">${nombre} ${apellidos}</h3>
+            <p class="profile-role">Rol: ${rolePretty}</p>
+            <p class="profile-role-desc">${roleDesc}</p>
+          </div>
+          <div class="profile-data">
+            <div class="profile-row">
+              <span class="label">Gmail</span>
+              <span class="value">${email || 'No especificado'}</span>
+            </div>
+            <div class="profile-row">
+              <span class="label">DNI</span>
+              <span class="value">${dni || 'No especificado'}</span>
+            </div>
+            <div class="profile-row">
+              <span class="label">Nombre</span>
+              <span class="value">${nombre || 'No especificado'}</span>
+            </div>
+            <div class="profile-row">
+              <span class="label">Apellidos</span>
+              <span class="value">${apellidos || 'No especificado'}</span>
+            </div>
+            <div class="profile-row">
+              <span class="label">Contraseña</span>
+              <span class="value">******</span>
+            </div>
+          </div>
+          <div class="profile-actions">
+            <button class="btn btn-ghost" id="perfil-edit">Editar información</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  #bindPerfil() {
+    const editBtn = this.#root.querySelector('#perfil-edit');
+    if (editBtn) {
+      editBtn.addEventListener('click', () => {
+        this.#openEditSelf();
+      });
+    }
+    const avatar = this.#root.querySelector('#perfil-avatar');
+    if (avatar) {
+      const open = () => this.#openAvatarModal();
+      avatar.addEventListener('click', open);
+      avatar.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          open();
+        }
+      });
+    }
+  }
+
+  #openAvatarModal() {
+    const modal = document.createElement('div');
+    modal.className = 'app-modal-backdrop';
+    const user = this.#user || {};
+    const nombreCompleto = `${user.nombre || ''} ${user.apellidos || ''}`.trim() || 'usuario';
+    modal.innerHTML = `
+      <div class="app-modal profile-avatar-modal">
+        <div class="app-modal-title">Foto de perfil de ${nombreCompleto}</div>
+        <div class="app-modal-body">
+          <div class="profile-avatar-large"></div>
+          <input type="file" id="avatar-input" accept="image/*" style="display:none" />
+        </div>
+        <div class="app-modal-actions">
+          <button class="btn btn-ghost" id="avatar-change">Nueva foto</button>
+          <button class="btn" id="avatar-close">Volver</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    const cleanup = () => { try { modal.remove(); } catch {} };
+    modal.addEventListener('click', (e)=>{ if (e.target===modal) cleanup(); });
+    const closeBtn = modal.querySelector('#avatar-close');
+    if (closeBtn) closeBtn.addEventListener('click', cleanup);
+
+    const avatarEl = modal.querySelector('.profile-avatar-large');
+    const fileInput = modal.querySelector('#avatar-input');
+    const keyBase = (()=>{
+      const u2 = this.#user || {};
+      return u2._id || u2.id || u2.dni || 'default';
+    })();
+    const storageKey = 'wf_avatar_' + keyBase;
+
+    // Cargar avatar existente si hay
+    try {
+      const stored = localStorage.getItem(storageKey);
+      if (stored && avatarEl) {
+        avatarEl.style.backgroundImage = `url(${stored})`;
+        avatarEl.style.backgroundSize = 'cover';
+        avatarEl.style.backgroundPosition = 'center';
+      }
+    } catch {}
+
+    const changeBtn = modal.querySelector('#avatar-change');
+    if (changeBtn && fileInput && avatarEl) {
+      changeBtn.addEventListener('click', () => {
+        fileInput.click();
+      });
+      fileInput.addEventListener('change', () => {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        if (!file.type || !file.type.startsWith('image/')) {
+          this.#toast('Selecciona una imagen válida.', 'warn');
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const data = reader.result;
+          try { localStorage.setItem(storageKey, data); } catch {}
+          // Enviar a la API para que se guarde en la BD
+          try {
+            let token = null;
+            try { token = localStorage.getItem('wf_jwt'); } catch { token = null; }
+            const id = (this.#user && (this.#user.id || this.#user._id)) || null;
+            if (id && token) {
+              const res = await fetch('http://localhost:8080/api/usuarios/actualizar', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer ' + token,
+                },
+                body: JSON.stringify({ id, fotoPerfil: data }),
+              });
+              const text = await res.text();
+              let json = null;
+              try { json = text ? JSON.parse(text) : null; } catch {}
+              if (!res.ok) {
+                const msg = (json && (json.error || json.message)) || (text && text.trim()) || `HTTP ${res.status}`;
+                this.#toast(msg || 'No se pudo guardar la foto.', 'err');
+              } else if (json && json.usuario) {
+                // Actualizar usuario local con fotoPerfil
+                this.#user = { ...this.#user, fotoPerfil: json.usuario.fotoPerfil || data };
+              }
+            }
+          } catch (e) {
+            this.#toast(e?.message || 'No se pudo guardar la foto en el servidor.', 'warn');
+          }
+
+          avatarEl.style.backgroundImage = `url(${data})`;
+          avatarEl.style.backgroundSize = 'cover';
+          avatarEl.style.backgroundPosition = 'center';
+          // Actualizar avatar en la pantalla principal
+          this.#applyAvatarFromStorage();
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+  }
+
+  #openEditSelf() {
+    const user = this.#user || {};
+    const modal = document.createElement('div');
+    modal.className = 'app-modal-backdrop';
+    const email = user.email || user.gmail || '';
+    modal.innerHTML = `
+      <div class="app-modal">
+        <div class="app-modal-title">Editar mi información</div>
+        <div class="app-modal-body">
+          <div class="row two">
+            <div><label>Nombre</label><input type="text" id="self-nombre" value="${user.nombre||''}"/></div>
+            <div><label>Apellidos</label><input type="text" id="self-apellidos" value="${user.apellidos||''}"/></div>
+          </div>
+          <div class="row two">
+            <div class="field-errors"><div class="field-error" id="err-self-nombre"></div></div>
+            <div class="field-errors"><div class="field-error" id="err-self-apellidos"></div></div>
+          </div>
+          <div class="row two">
+            <div><label>DNI</label><input type="text" id="self-dni" value="${user.dni||''}"/></div>
+            <div><label>Gmail</label><input type="email" id="self-gmail" value="${email}"/></div>
+          </div>
+          <div class="row two">
+            <div class="field-errors"><div class="field-error" id="err-self-dni"></div></div>
+            <div class="field-errors"><div class="field-error" id="err-self-gmail"></div></div>
+          </div>
+        </div>
+        <div class="app-modal-actions">
+          <button class="btn btn-ghost" id="self-cancel">Cancelar</button>
+          <button class="btn" id="self-ok">Guardar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    const cleanup = () => { try { modal.remove(); } catch {} };
+    modal.addEventListener('click', (e)=>{ if (e.target===modal) cleanup(); });
+    const cancel = modal.querySelector('#self-cancel');
+    if (cancel) cancel.addEventListener('click', cleanup);
+
+    const clearErrors = () => {
+      ['nombre','apellidos','dni','gmail'].forEach(k => {
+        const input = modal.querySelector('#self-'+k);
+        const err = modal.querySelector('#err-self-'+k);
+        if (input) input.style.borderColor = '';
+        if (err) err.textContent = '';
+      });
+    };
+    const validate = () => {
+      clearErrors();
+      let ok = true;
+      const nombre = modal.querySelector('#self-nombre').value.trim();
+      const apellidos = modal.querySelector('#self-apellidos').value.trim();
+      let dni = modal.querySelector('#self-dni').value.trim();
+      const gmail = modal.querySelector('#self-gmail').value.trim();
+      const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
+      const dniRe = /^[0-9]{7,8}[A-Za-z]$/;
+      if (!nombre) { ok=false; const err = modal.querySelector('#err-self-nombre'); if (err) err.textContent = 'Nombre es obligatorio.'; const el = modal.querySelector('#self-nombre'); if (el) el.style.borderColor = '#f66'; }
+      if (!apellidos) { ok=false; const err = modal.querySelector('#err-self-apellidos'); if (err) err.textContent = 'Apellidos son obligatorios.'; const el = modal.querySelector('#self-apellidos'); if (el) el.style.borderColor = '#f66'; }
+      if (!dni || !dniRe.test(dni)) { ok=false; const err = modal.querySelector('#err-self-dni'); if (err) err.textContent = 'DNI inválido (7-8 dígitos + letra).'; const el = modal.querySelector('#self-dni'); if (el) el.style.borderColor = '#f66'; }
+      if (!gmail || !emailRe.test(gmail)) { ok=false; const err = modal.querySelector('#err-self-gmail'); if (err) err.textContent = 'Email inválido.'; const el = modal.querySelector('#self-gmail'); if (el) el.style.borderColor = '#f66'; }
+      return ok;
+    };
+    ['self-nombre','self-apellidos','self-dni','self-gmail'].forEach(id => {
+      const el = modal.querySelector('#'+id);
+      if (el) el.addEventListener('input', () => {
+        const k = id.replace('self-','');
+        const err = modal.querySelector('#err-self-'+k);
+        if (err) err.textContent = '';
+        el.style.borderColor = '';
+      });
+    });
+
+    const okBtn = modal.querySelector('#self-ok');
+    if (okBtn) okBtn.addEventListener('click', async () => {
+      if (!validate()) return;
+      const updates = {
+        nombre: modal.querySelector('#self-nombre').value.trim(),
+        apellidos: modal.querySelector('#self-apellidos').value.trim(),
+        dni: modal.querySelector('#self-dni').value.trim().toUpperCase(),
+        gmail: modal.querySelector('#self-gmail').value.trim(),
+      };
+      try {
+        const { ipcRenderer } = window.require ? window.require('electron') : {};
+        const jwt = (()=>{ try { return localStorage.getItem('wf_jwt'); } catch { return null; } })();
+        const id = user._id || user.id;
+        if (!ipcRenderer || !id) {
+          this.#toast('No se pudo actualizar el perfil en este entorno.', 'warn');
+          cleanup();
+          return;
+        }
+        const res = await ipcRenderer.invoke('admin:update-user', { id, updates, token: jwt });
+        if (res && res.ok && res.usuario) {
+          this.#user = {
+            ...this.#user,
+            nombre: res.usuario.nombre,
+            apellidos: res.usuario.apellidos,
+            dni: res.usuario.dni,
+            email: res.usuario.gmail || res.usuario.email,
+          };
+          // Actualizar sesión guardada si existe
+          try {
+            const raw = localStorage.getItem('wf_saved_session');
+            if (raw) {
+              const data = JSON.parse(raw);
+              if (data && data.dni) {
+                data.dni = this.#user.dni || data.dni;
+              }
+              localStorage.setItem('wf_saved_session', JSON.stringify(data));
+            }
+          } catch {}
+          this.#toast('Perfil actualizado.', 'ok');
+          this.render();
+        } else {
+          this.#toast(res?.error || 'No se pudo actualizar.', 'err');
+        }
+      } catch (e) {
+        this.#toast(e?.message || 'Error actualizando.', 'err');
+      } finally {
+        cleanup();
+      }
+    });
   }
 
   #renderCalendar() {
@@ -280,12 +602,63 @@ export class HomeView {
 
     const today = new Date();
     const isThisMonth = (today.getFullYear() === year && today.getMonth() === month);
-    let dayCounter = 0; // track for matching day numbers only in current month
-    const body = weeks.flat().map((val) => {
+
+    // Mapear eventos por fecha 'YYYY-MM-DD' para pintarlos en cada día
+    const eventsByDate = new Map();
+    (this.#events || []).forEach(ev => {
+      if (!ev?.date) return;
+      const list = eventsByDate.get(ev.date) || [];
+      list.push(ev);
+      eventsByDate.set(ev.date, list);
+    });
+
+    const body = weeks.flat().map((val, idx) => {
       if (!val) return '<div class="cal-cell empty"></div>';
-      dayCounter += 1;
-      const isToday = isThisMonth && Number(val) === today.getDate();
-      return `<div class="cal-cell${isToday ? ' today' : ''}">${val}</div>`;
+      const dayNum = Number(val);
+      const isToday = isThisMonth && dayNum === today.getDate();
+      const dateObj = new Date(year, month, dayNum);
+      const iso = dateObj.toISOString().slice(0, 10); // YYYY-MM-DD
+      const dayEvents = eventsByDate.get(iso) || [];
+      const typeMap = {
+        EXAMEN: { label: 'Examen', cls: 'exam' },
+        EVENTO: { label: 'Evento', cls: 'event' },
+        VIAJE:  { label: 'Viaje', cls: 'trip' },
+        OTRO:   { label: 'Otro', cls: 'other' },
+      };
+      let eventsHtml = '';
+      if (dayEvents.length === 1) {
+        const ev = dayEvents[0];
+        const type = ev.type || 'EVENTO';
+        const meta = typeMap[type] || typeMap.EVENTO;
+        const title = (ev.title || meta.label).toString();
+        const shortTitle = title.length > 18 ? title.slice(0, 17) + '…' : title;
+        eventsHtml = `<div class="cal-event cal-event--${meta.cls}" data-id="${ev.id}" data-date="${iso}">
+          <div class="cal-event-pill">
+            <span class="cal-event-type">${meta.label}</span>
+            <span class="cal-event-title">${shortTitle}</span>
+          </div>
+        </div>`;
+      } else if (dayEvents.length > 1) {
+        const ev = dayEvents[0];
+        const type = ev.type || 'EVENTO';
+        const meta = typeMap[type] || typeMap.EVENTO;
+        const title = (ev.title || meta.label).toString();
+        const shortTitle = title.length > 18 ? title.slice(0, 17) + '…' : title;
+        const extraCount = dayEvents.length - 1;
+        eventsHtml = `
+          <div class="cal-event cal-event--${meta.cls}" data-id="${ev.id}" data-date="${iso}">
+            <div class="cal-event-pill">
+              <span class="cal-event-type">${meta.label}</span>
+              <span class="cal-event-title">${shortTitle}</span>
+            </div>
+          </div>
+          <button class="cal-more-events" data-date="${iso}" data-count="${dayEvents.length}">+${extraCount} más</button>
+        `;
+      }
+      return `<div class="cal-cell${isToday ? ' today' : ''}" data-date="${iso}">
+        <div class="cal-day-num">${val}</div>
+        <div class="cal-events">${eventsHtml}</div>
+      </div>`;
     }).join('');
     return `
       <div class="cal-grid">
@@ -302,7 +675,28 @@ export class HomeView {
     if (m > 11) { m = 0; y += 1; }
     this.#state.month = m;
     this.#state.year = y;
+    // Forzar recarga de eventos del nuevo mes
+    this.#eventsLoaded = false;
     this.render();
+  }
+
+  async #loadMonthEvents() {
+    try {
+      const events = await EventsModel.listMonth(this.#state.year, this.#state.month);
+      this.#events = Array.isArray(events) ? events : [];
+      // Guardar mes/año cargados
+      this.#eventsYear = this.#state.year;
+      this.#eventsMonth = this.#state.month;
+      // Re-render solo si seguimos en el panel (calendario)
+      if (this.#state.section === 'panel') {
+        this.render();
+      }
+    } catch (e) {
+      // Solo mostrar error a profes/admin para no molestar a alumnos
+      if (['professor','admin'].includes(this.#user?.role)) {
+        this.#toast(e?.message || 'No se pudieron cargar los eventos.', 'err');
+      }
+    }
   }
 
   #bindMenu() {
@@ -310,7 +704,13 @@ export class HomeView {
     menu.forEach(btn => {
       btn.addEventListener('click', () => {
         const id = btn.getAttribute('data-id');
-        if (id === 'horario') {
+        if (id === 'calendario') {
+          this.#state.section = 'panel';
+          this.render();
+        } else if (id === 'mi-perfil') {
+          this.#state.section = 'perfil';
+          this.render();
+        } else if (id === 'horario') {
           this.#state.section = 'horario';
           this.render();
         } else if (id === 'gestion-nfc' && this.#user?.role === 'admin') {
@@ -338,12 +738,15 @@ export class HomeView {
         } else if (id === 'crear-profesores' && this.#user?.role === 'admin') {
           this.#state.section = 'crear-profesor';
           this.render();
+        } else if (id === 'anadir-evento' && ['professor','admin'].includes(this.#user?.role)) {
+          // Ir al panel (calendario) y abrir ayuda para eventos
+          this.#state.section = 'panel';
+          this.render();
+          this.#toast('Haz clic en un día para crear un evento.', 'info');
         } else {
           this.#state.section = 'panel';
-          if (id !== 'mi-perfil') this.#toast('Sección en construcción: ' + id, 'warn');
           this.render();
         }
-        
       });
     });
   }
@@ -405,9 +808,7 @@ export class HomeView {
       if (password && password.length < 6) { if (errEl) errEl.textContent='La contraseña debe tener al menos 6 caracteres.'; return; }
       dni = dni ? dni.toUpperCase() : '';
       try {
-        const { ipcRenderer } = window.require ? window.require('electron') : {};
-        if (!ipcRenderer) return;
-        const res = await ipcRenderer.invoke('users:create', { nombre, apellidos, dni, email, fechaNacimiento, password, role });
+        const res = await AuthModel.registerUsuarioAdmin({ nombre, apellidos, dni, email, fechaNacimiento, password, role });
         if (res && res.ok) {
           this.#toast('Usuario creado correctamente.', 'ok');
           // Actualizar listas si estamos en sección correspondiente
@@ -554,11 +955,12 @@ export class HomeView {
     return (users||[]).map(u=>{
       const has = !!u.nfcToken;
       const tokenLabel = has ? `UID: ${u.nfcToken}` : 'Sin NFC';
+      const avatarStyle = u.fotoPerfil ? ` style="background-image:url('${u.fotoPerfil}');background-size:cover;background-position:center;"` : '';
       return `
         <div class="nfc-row" data-id="${u._id}">
           <div class="nfc-row-info">
             <div class="user-card small">
-              <div class="avatar" aria-hidden="true"></div>
+              <div class="avatar" aria-hidden="true"${avatarStyle}></div>
               <div class="user-info">
                 <div class="name">${u.nombre || 'Usuario'}</div>
                 <div class="email">${u.email || ''}</div>
@@ -814,11 +1216,12 @@ export class HomeView {
     return (users||[]).map(u=>{
       const has = !!u.nfcToken;
       const tokenLabel = has ? `UID: ${u.nfcToken}` : 'Sin NFC';
+      const avatarStyle = u.fotoPerfil ? ` style="background-image:url('${u.fotoPerfil}');background-size:cover;background-position:center;"` : '';
       return `
         <div class="nfc-row" data-id="${u._id}">
           <div class="nfc-row-info">
             <div class="user-card small">
-              <div class="avatar" aria-hidden="true"></div>
+              <div class="avatar" aria-hidden="true"${avatarStyle}></div>
               <div class="user-info">
                 <div class="name">${u.nombre || 'Usuario'}</div>
                 <div class="email">${u.email || ''}</div>
@@ -1341,6 +1744,251 @@ export class HomeView {
     const endMin = this.#toMinutes(start) + (duration||60);
     const h = Math.floor(endMin/60), m = endMin%60;
     return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  }
+
+  // ---------- Eventos de calendario (modal CRUD) ----------
+
+  async #openDayEventsModal(dateIso) {
+    const events = (this.#events || []).filter(e => e.date === dateIso);
+    if (!events.length) return;
+
+    const typeMeta = {
+      EXAMEN: { label: 'Examen', cls: 'exam' },
+      EVENTO: { label: 'Evento', cls: 'event' },
+      VIAJE:  { label: 'Viaje', cls: 'trip' },
+      OTRO:   { label: 'Otro', cls: 'other' },
+    };
+
+    const safe = (txt) => String(txt || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const dateObj = new Date(dateIso + 'T00:00:00');
+    const dateLabel = isNaN(dateObj.getTime())
+      ? dateIso
+      : dateObj.toLocaleDateString('es-ES', { weekday:'long', day:'2-digit', month:'long', year:'numeric' });
+
+    const items = events.map(ev => {
+      const meta = typeMeta[ev.type] || typeMeta.EVENTO;
+      const title = safe(ev.title || meta.label);
+      const time = safe(ev.start || '');
+      const desc = safe((ev.description || '').slice(0, 80));
+      return `
+        <button class="event-list-item event-list-item--${meta.cls}" data-id="${ev.id}">
+          <div class="event-list-main">
+            <div class="event-list-title-row">
+              <span class="event-list-title">${title}</span>
+              <span class="event-list-time">${time}</span>
+            </div>
+            <div class="event-list-meta-row">
+              <span class="event-chip event-chip--${meta.cls}">${meta.label}</span>
+              ${desc ? `<span class="event-list-desc">${desc}${ev.description && ev.description.length > 80 ? '…' : ''}</span>` : ''}
+            </div>
+          </div>
+        </button>`;
+    }).join('');
+
+    const html = `
+      <div class="app-modal-backdrop">
+        <div class="app-modal event-list-modal">
+          <div class="event-modal-header">
+            <h3 class="event-modal-title">Eventos del ${safe(dateLabel)}</h3>
+          </div>
+          <div class="event-list-body">
+            ${items}
+          </div>
+          <div class="app-modal-actions">
+            <button class="btn btn-ghost" id="ev-list-close">Cerrar</button>
+          </div>
+        </div>
+      </div>`;
+
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = html;
+    const modal = wrapper.firstElementChild;
+    document.body.appendChild(modal);
+
+    const cleanup = () => { try { modal.remove(); } catch {} };
+    modal.addEventListener('click', (e) => { if (e.target === modal) cleanup(); });
+    modal.querySelector('#ev-list-close')?.addEventListener('click', cleanup);
+
+    modal.querySelectorAll('.event-list-item').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-id');
+        const evObj = (this.#events || []).find(e => e.id === id);
+        if (!evObj) return;
+        const canEdit = ['professor', 'admin'].includes(this.#user?.role);
+        cleanup();
+        this.#openEventModal(evObj, { mode: canEdit ? 'edit' : 'view' });
+      });
+    });
+  }
+
+  async #openEventModal(ev = {}, { mode = 'view' } = {}) {
+    const canEdit = ['professor', 'admin'].includes(this.#user?.role);
+    const isCreate = mode === 'create';
+    const isEdit = mode === 'edit';
+    const readOnly = !canEdit || mode === 'view';
+    const baseDate = ev.date || (new Date(this.#state.year, this.#state.month, 1).toISOString().slice(0,10));
+
+    // Meta de tipo para etiquetas y estilos
+    const typeMeta = {
+      EXAMEN: { label: 'Examen', cls: 'exam' },
+      EVENTO: { label: 'Evento', cls: 'event' },
+      VIAJE:  { label: 'Viaje', cls: 'trip' },
+      OTRO:   { label: 'Otro', cls: 'other' },
+    };
+    const meta = typeMeta[ev.type] || typeMeta.EVENTO;
+
+    // Vista bonita solo lectura para alumnos
+    if (readOnly && !canEdit) {
+      const title = (ev.title || meta.label || 'Evento').toString();
+      const safeText = (txt) => String(txt || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const dateObj = baseDate ? new Date(baseDate + 'T00:00:00') : new Date();
+      const dateLabel = isNaN(dateObj.getTime())
+        ? baseDate
+        : dateObj.toLocaleDateString('es-ES', { weekday:'long', day:'2-digit', month:'long', year:'numeric' });
+
+      const startStr = ev.start || '08:00';
+      const durationMin = Number(ev.duration || 60);
+      let durLabel;
+      if (!durationMin || durationMin < 60) {
+        durLabel = `${durationMin || 60} min`;
+      } else {
+        const h = Math.floor(durationMin / 60);
+        const m = durationMin % 60;
+        durLabel = m ? `${h} h ${m} min` : `${h} h`;
+      }
+
+      const htmlView = `
+        <div class="app-modal-backdrop">
+          <div class="app-modal event-modal event-modal--${meta.cls}">
+            <div class="event-modal-header">
+              <span class="event-chip event-chip--${meta.cls}">${meta.label}</span>
+              <h3 class="event-modal-title">${safeText(title)}</h3>
+            </div>
+            <div class="event-modal-body">
+              <dl class="event-meta">
+                <div class="event-meta-row">
+                  <dt>Fecha</dt>
+                  <dd>${safeText(dateLabel)}</dd>
+                </div>
+                <div class="event-meta-row">
+                  <dt>Hora de inicio</dt>
+                  <dd>${safeText(startStr)}</dd>
+                </div>
+                <div class="event-meta-row">
+                  <dt>Duración</dt>
+                  <dd>${safeText(durLabel)}</dd>
+                </div>
+              </dl>
+              <div class="event-desc">
+                <h4>Descripción</h4>
+                <p>${safeText(ev.description || 'Sin descripción adicional.')}</p>
+              </div>
+            </div>
+            <div class="app-modal-actions">
+              <button class="btn btn-ghost" id="ev-cancel">Cerrar</button>
+            </div>
+          </div>
+        </div>`;
+
+      const wrapView = document.createElement('div');
+      wrapView.innerHTML = htmlView;
+      const modalView = wrapView.firstElementChild;
+      document.body.appendChild(modalView);
+      const cleanupView = () => { try { modalView.remove(); } catch {} };
+      modalView.addEventListener('click', (e) => { if (e.target === modalView) cleanupView(); });
+      modalView.querySelector('#ev-cancel')?.addEventListener('click', cleanupView);
+      return;
+    }
+
+    const html = `
+      <div class="app-modal-backdrop">
+        <div class="app-modal app-modal-wide event-modal event-modal--${meta.cls}">
+          <div class="app-modal-title">${isCreate ? 'Nuevo evento' : (isEdit ? 'Editar evento' : 'Detalle de evento')}</div>
+          <div class="app-modal-body">
+            <div class="form-grid">
+              <label>Título
+                <input type="text" id="ev-title" value="${ev.title || ''}" ${readOnly ? 'disabled' : ''} />
+              </label>
+              <label>Tipo
+                <select id="ev-type" ${readOnly ? 'disabled' : ''}>
+                  <option value="EXAMEN" ${ev.type === 'EXAMEN' ? 'selected' : ''}>Examen</option>
+                  <option value="EVENTO" ${!ev.type || ev.type === 'EVENTO' ? 'selected' : ''}>Evento</option>
+                  <option value="VIAJE" ${ev.type === 'VIAJE' ? 'selected' : ''}>Viaje</option>
+                  <option value="OTRO" ${ev.type === 'OTRO' ? 'selected' : ''}>Otro</option>
+                </select>
+              </label>
+              <label>Fecha
+                <input type="date" id="ev-date" value="${baseDate}" ${readOnly ? 'disabled' : ''} />
+              </label>
+              <label>Hora inicio
+                <input type="time" id="ev-start" value="${ev.start || '08:00'}" ${readOnly ? 'disabled' : ''} />
+              </label>
+              <label>Duración (min)
+                <input type="number" id="ev-duration" value="${ev.duration || 60}" min="15" step="15" ${readOnly ? 'disabled' : ''} />
+              </label>
+            </div>
+            <label>Descripción
+              <textarea id="ev-desc" rows="4" ${readOnly ? 'disabled' : ''}>${ev.description || ''}</textarea>
+            </label>
+          </div>
+          <div class="app-modal-actions">
+            <button class="btn btn-ghost" id="ev-cancel">Cerrar</button>
+            ${canEdit && (isCreate || isEdit) ? '<button class="btn" id="ev-save">Guardar</button>' : ''}
+            ${canEdit && isEdit ? '<button class="btn btn-ghost" id="ev-delete">Eliminar</button>' : ''}
+          </div>
+        </div>
+      </div>`;
+
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = html;
+    const modal = wrapper.firstElementChild;
+    document.body.appendChild(modal);
+
+    const cleanup = () => { try { modal.remove(); } catch {} };
+    modal.addEventListener('click', (e) => { if (e.target === modal) cleanup(); });
+    modal.querySelector('#ev-cancel')?.addEventListener('click', cleanup);
+
+    if (canEdit && (isCreate || isEdit)) {
+      modal.querySelector('#ev-save')?.addEventListener('click', async () => {
+        const payload = {
+          id: ev.id,
+          title: modal.querySelector('#ev-title')?.value?.trim() || 'Evento',
+          type: modal.querySelector('#ev-type')?.value || 'EVENTO',
+          date: modal.querySelector('#ev-date')?.value,
+          start: modal.querySelector('#ev-start')?.value || '08:00',
+          duration: Math.max(15, Number(modal.querySelector('#ev-duration')?.value || 60)),
+          description: modal.querySelector('#ev-desc')?.value || '',
+        };
+        try {
+          if (!payload.date) throw new Error('La fecha es obligatoria.');
+          if (isCreate) {
+            await EventsModel.create(payload);
+          } else {
+            await EventsModel.update(String(ev.id), payload);
+          }
+          cleanup();
+          this.#toast('Evento guardado correctamente.', 'ok');
+          await this.#loadMonthEvents();
+        } catch (err) {
+          this.#toast(err?.message || 'No se pudo guardar el evento.', 'err');
+        }
+      });
+
+      if (isEdit) {
+        modal.querySelector('#ev-delete')?.addEventListener('click', async () => {
+          const ok = await this.#confirmDialog('Eliminar evento', '¿Seguro que quieres eliminar este evento?', 'Eliminar', 'Cancelar');
+          if (!ok) return;
+          try {
+            await EventsModel.remove(String(ev.id));
+            cleanup();
+            this.#toast('Evento eliminado.', 'ok');
+            await this.#loadMonthEvents();
+          } catch (err) {
+            this.#toast(err?.message || 'No se pudo eliminar el evento.', 'err');
+          }
+        });
+      }
+    }
   }
 
   // ---------- Config persistence ----------

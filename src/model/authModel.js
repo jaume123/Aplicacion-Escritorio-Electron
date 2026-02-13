@@ -49,6 +49,8 @@ export class AuthModel {
         this.#user = normalized;
         this.#token = result.token; // Almacenar el token
         try { localStorage.setItem('wf_jwt', String(this.#token||'')); } catch {}
+        // Registrar entrada de sesión en la app
+        this.registrarAccesoApp('entrada');
         return { ...result, usuario: normalized };
       }
       throw new Error(result.error || "Error de acceso");
@@ -91,7 +93,37 @@ export class AuthModel {
     this.#user = normalized;
     this.#token = token || null;
     try { localStorage.setItem('wf_jwt', String(this.#token||'')); } catch {}
+    // Registrar entrada también cuando el login es por NFC
+    this.registrarAccesoApp('entrada');
     return { usuario: normalized, token: this.#token };
+  }
+
+  // Registro de entrada/salida asociado a la sesión actual de la app
+  async registrarAccesoApp(tipo = 'entrada') {
+    return AuthModel.registrarAccesoAppForUser(this.#user, tipo);
+  }
+
+  // Helper estático reutilizable (desde HomeController, etc.)
+  static async registrarAccesoAppForUser(user, tipo = 'salida') {
+    if (!user) return;
+    const userId = user.id || user._id;
+    if (!userId) return;
+    let token = null;
+    try { token = localStorage.getItem('wf_jwt'); } catch {
+      token = null;
+    }
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    try {
+      await fetch('http://localhost:8080/api/usuarios/registrar-entrada-salida-app', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ userId, tipo }),
+        keepalive: true,
+      });
+    } catch {
+      // Silenciar errores: no bloquear flujo de login/logout
+    }
   }
 
   async registerAlumno(payload) {
@@ -127,6 +159,69 @@ export class AuthModel {
       throw new Error(result.message || "Error al registrar alumno");
     } catch (err) {
       throw new Error(err.message || "Error al registrar alumno");
+    }
+  }
+
+  // Registro de usuario desde panel admin/profesor (alumno o profesor)
+  static async registerUsuarioAdmin(params) {
+    const {
+      nombre,
+      apellidos,
+      dni,
+      email,
+      fechaNacimiento,
+      password,
+      role,
+    } = params || {};
+
+    const emailNorm = String(email || "").trim().toLowerCase();
+    const pass = String(password || "123456").trim();
+    if (!emailNorm || !pass) throw new Error("Completa correo y contraseña.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNorm)) {
+      throw new Error("El correo no es válido.");
+    }
+
+    const body = {
+      nombre: String(nombre || "").trim(),
+      apellidos: String(apellidos || "").trim(),
+      dni: String(dni || "").trim().toUpperCase(),
+      gmail: emailNorm,
+      fechaNacimiento: String(fechaNacimiento || "").trim(),
+      password: pass,
+      rol: String(role === "professor" ? "PROFESOR" : "ALUMNO"),
+    };
+
+    try {
+      const response = await fetch(
+        "http://localhost:8080/api/usuarios/register",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      const text = await response.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch { /* noop */ }
+
+      if (!response.ok) {
+        const msg =
+          (data && (data.error || data.message)) ||
+          (text && text.trim()) ||
+          `HTTP ${response.status}`;
+        return { ok: false, error: msg };
+      }
+
+      const usuario = data && (data.usuario || data.user || null);
+      const id = usuario && (usuario.id || usuario._id || usuario.userId || null);
+      return {
+        ok: true,
+        id: id ? String(id) : undefined,
+        usuario,
+        nfcToken: data ? data.nfcToken : undefined,
+      };
+    } catch (err) {
+      return { ok: false, error: err.message || "Error creando usuario" };
     }
   }
 

@@ -164,16 +164,6 @@ app.on('ready', () => {
     }
   });
 
-  // Crear usuario (admin/professor): role = 'alumno' | 'professor'
-  ipcMain.handle('users:create', async (event, payload) => {
-    try {
-      const res = await db.createUserSimple(payload || {});
-      return res;
-    } catch (err) {
-      return { ok: false, error: err.message || 'Error creando usuario' };
-    }
-  });
-
   // Deshabilitar NFC para un usuario
   ipcMain.handle('nfc:disable', async (event, userId) => {
     try {
