@@ -10,6 +10,11 @@ export class HomeView {
     section: 'panel',
     horarioMode: 'manana',
   };
+  // Estado específico para la vista de asistencias
+  #asistYear = new Date().getFullYear();
+  #asistMonth = new Date().getMonth();
+  #asistSelectedUser = null; // Usuario cuyas asistencias se visualizan (por defecto, el propio)
+  #asistByDate = new Map(); // Índice por día (y usuario) para los registros cargados
   #horario = [];
   #horarios = { manana: [], tarde: [] };
   #cfg = { startHour: 8, endHour: 18, hourHeight: 52, slotMinutes: 15 };
@@ -241,6 +246,7 @@ export class HomeView {
     if (this.#state.section === 'perfil') this.#bindPerfil();
     if (this.#state.section === 'horario') this.#bindHorarioEvents();
     if (this.#state.section === 'gestion-nfc' && this.#user?.role === 'admin') this.#bindGestionNFC();
+    if (this.#state.section === 'asistencias') this.#bindAsistencias();
     // Auto-cargar listas si ya estamos en la sección correspondiente
     if (this.#state.section === 'lista-alumnos' && this.#user?.role === 'admin') this.#loadUsers('alumno');
     if (this.#state.section === 'lista-profesores' && this.#user?.role === 'admin') this.#loadUsers('professor');
@@ -717,9 +723,19 @@ export class HomeView {
           this.#state.section = 'gestion-nfc';
           this.render();
         } else if (id === 'asistencias') {
+          const role = this.#user?.role || 'alumno';
           this.#state.section = 'asistencias';
+          // Al entrar en asistencias empezamos siempre en modo global (sin usuario seleccionado)
+          this.#asistSelectedUser = null;
           this.render();
-          this.#loadRegistros();
+          if (role === 'alumno') {
+            this.#loadRegistros(this.#user);
+          } else {
+            // Profesores/admin: vista agregada mensual por rol alumno (por defecto)
+            // y precarga de lista de usuarios para que la barra de búsqueda funcione
+            this.#loadUsers('alumno', true);
+            this.#loadRegistrosMesGlobal('alumno');
+          }
         } else if (id === 'alumnos' && this.#user?.role === 'professor') {
           this.#state.section = 'lista-alumnos';
           this.render();
@@ -827,44 +843,708 @@ export class HomeView {
 
   // ---------- Asistencias (registros E/S) ----------
   #renderAsistencias(){
-    const rows = (this.#registros||[]).map(r=>{
-      const dt = new Date(r.fechaHora);
-      const d = dt.toLocaleDateString('es-ES');
-      const t = dt.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
-      const tipo = String(r.tipo||'').toLowerCase();
-      return `<tr><td>${d}</td><td>${t}</td><td class="${tipo==='entrada'?'ok':'warn'}">${tipo}</td><td>${r.uid||''}</td></tr>`;
-    }).join('');
+    const role = this.#user?.role || 'alumno';
+    const selected = this.#asistSelectedUser || this.#user || {};
+    const nombreSel = (selected.nombre || '') + (selected.apellidos ? (' ' + selected.apellidos) : '');
+    let titulo;
+    if (role === 'alumno') {
+      titulo = 'Mis asistencias';
+    } else if (this.#asistSelectedUser) {
+      // Profesor/Admin con un usuario concreto seleccionado
+      const base = nombreSel || selected.email || 'usuario';
+      titulo = `Asistencias de ${base}`;
+    } else {
+      // Vista agregada (sin usuario seleccionado)
+      const currentRoleFilter = role === 'admin' ? (this.#usersFilter.role || 'alumno') : 'alumno';
+      if (currentRoleFilter === 'professor') titulo = 'Asistencias de Profesores';
+      else titulo = 'Asistencias de Alumnos';
+    }
+
+    // Construir índice por día para el mes/año seleccionados
+    this.#buildAsistenciasIndex();
+
+    const monthLabel = this.#asistMonthLabel();
+
+    const showUserSelector = role === 'professor' || role === 'admin';
+
     return `
-      <div class="asistencias">
-        <div class="panel-header">
-          <h3>Mis fichajes</h3>
-          <button class="btn btn-ghost" id="reload-reg">Recargar</button>
-        </div>
-        <div class="table-wrap">
-          <table class="table">
-            <thead><tr><th>Fecha</th><th>Hora</th><th>Tipo</th><th>UID</th></tr></thead>
-            <tbody>${rows || '<tr><td colspan="4" class="empty">Sin registros</td></tr>'}</tbody>
-          </table>
+      <div class="asistencias asistencias-layout">
+        ${showUserSelector ? this.#renderAsistenciasSidebar() : ''}
+        <div class="asist-main">
+          <div class="asist-header">
+            <div class="asist-header-text">
+              <h3>${titulo}</h3>
+              <p class="asist-sub">Haz clic en un día para ver la hora de entrada y salida.</p>
+            </div>
+            <div class="asist-header-controls">
+              <button class="icon" id="asist-prev" aria-label="Mes anterior">‹</button>
+              <div class="month">${monthLabel}</div>
+              <button class="icon" id="asist-next" aria-label="Mes siguiente">›</button>
+              <button class="btn btn-ghost" id="reload-reg">Recargar</button>
+            </div>
+          </div>
+          <div class="asist-calendar">
+            ${this.#renderAsistenciasCalendar()}
+          </div>
         </div>
       </div>
     `;
   }
 
-  async #loadRegistros(){
+  async #loadRegistros(targetUser = null){
     try {
       const { ipcRenderer } = window.require ? window.require('electron') : {};
       if (!ipcRenderer) return;
+      const user = targetUser || this.#asistSelectedUser || this.#user;
+      if (!user) return;
+      this.#asistSelectedUser = user;
+      const userId = user._id || user.id;
       const jwt = (()=>{ try { return localStorage.getItem('wf_jwt'); } catch { return null; } })();
-      const res = await ipcRenderer.invoke('nfc:list-registros', { userId: this.#user?._id, token: jwt, limit: 50 });
+      const res = await ipcRenderer.invoke('nfc:list-registros', { userId, token: jwt, limit: 300 });
       if (res && res.ok) {
         this.#registros = res.registros || [];
-        // Re-render sección asistencias para mostrar los datos
+        // Recalcular índice y re-render sección asistencias para mostrar los datos
+        this.#buildAsistenciasIndex();
         if (this.#state.section === 'asistencias') this.render();
       } else {
         this.#toast(res?.error || 'No se pudieron cargar los registros.', 'err');
       }
     } catch (e) {
       this.#toast(e?.message || 'Error cargando registros.', 'err');
+    }
+  }
+
+  // Carga agregada para profesores/admin: todos los registros del centro en el mes actual,
+  // que luego se filtrarán por rol desde la lista de usuarios.
+  async #loadRegistrosMesGlobal(roleFilter = 'alumno'){
+    try {
+      const { ipcRenderer } = window.require ? window.require('electron') : {};
+      if (!ipcRenderer) return;
+      const jwt = (()=>{ try { return localStorage.getItem('wf_jwt'); } catch { return null; } })();
+      const year = this.#asistYear;
+      const month = this.#asistMonth + 1; // 1-12
+      const res = await ipcRenderer.invoke('asistencias:list-mes', { year, month, token: jwt });
+      if (res && res.ok) {
+        let registros = res.registros || [];
+        // Filtrar por rol usando la información incluida en cada registro (campo 'rol' de la API)
+        const filtro = String(roleFilter || 'alumno').toLowerCase();
+        registros = registros.filter(r => {
+          const up = String(r.rol || r.role || '').toUpperCase();
+          if (!up) return false;
+          if (up === 'ADMIN') return false; // Nunca mostramos registros de admin en vistas agregadas
+          if (filtro === 'alumno') return up === 'ALUMNO';
+          if (filtro === 'professor') return up === 'PROFESOR';
+          return true;
+        });
+        this.#registros = registros;
+        this.#buildAsistenciasIndex();
+        if (this.#state.section === 'asistencias') this.render();
+      } else {
+        this.#toast(res?.error || 'No se pudieron cargar las asistencias del mes.', 'err');
+      }
+    } catch (e) {
+      this.#toast(e?.message || 'Error cargando asistencias del mes.', 'err');
+    }
+  }
+
+  #buildAsistenciasIndex(){
+    const map = new Map();
+    const year = this.#asistYear;
+    const month = this.#asistMonth;
+    (this.#registros || []).forEach(r => {
+      const dt = new Date(r.fechaHora);
+      if (Number.isNaN(dt.getTime())) return;
+      if (dt.getFullYear() !== year || dt.getMonth() !== month) return;
+      const iso = dt.toISOString().slice(0,10);
+      let day = map.get(iso);
+      if (!day) {
+        day = { date: iso, byUser: new Map() };
+        map.set(iso, day);
+      }
+      const userId = String(r.userId || '');
+      let u = day.byUser.get(userId);
+      if (!u) {
+        u = {
+          userId,
+          nombre: r.nombre || '',
+          email: r.email || '',
+          registros: [],
+          entradas: [],
+          salidas: [],
+        };
+        day.byUser.set(userId, u);
+      }
+      u.registros.push(r);
+      const tipo = String(r.tipo || '').toLowerCase();
+      if (tipo === 'entrada') u.entradas.push(r);
+      else if (tipo === 'salida') u.salidas.push(r);
+    });
+
+    // Enriquecer con primera entrada y última salida por usuario y totales
+    map.forEach(day => {
+      let totalUsuarios = 0;
+      day.byUser.forEach(u => {
+        if (u.entradas.length) {
+          u.primeraEntrada = u.entradas.reduce((min, r) => {
+            const dt = new Date(r.fechaHora);
+            return (!min || dt < min) ? dt : min;
+          }, null);
+        }
+        if (u.salidas.length) {
+          u.ultimaSalida = u.salidas.reduce((max, r) => {
+            const dt = new Date(r.fechaHora);
+            return (!max || dt > max) ? dt : max;
+          }, null);
+        }
+        u.asistio = !!u.primeraEntrada;
+        if (u.asistio) totalUsuarios += 1;
+      });
+      day.totalUsuarios = totalUsuarios;
+      day.asistio = totalUsuarios > 0;
+    });
+
+    this.#asistByDate = map;
+    return map;
+  }
+
+  #asistMonthLabel(){
+    const date = new Date(this.#asistYear, this.#asistMonth, 1);
+    const month = date.toLocaleString('es-ES', { month: 'long' });
+    const label = month.charAt(0).toUpperCase() + month.slice(1);
+    return `${label} ${this.#asistYear}`;
+  }
+
+  #renderAsistenciasCalendar(){
+    const year = this.#asistYear;
+    const month = this.#asistMonth;
+    const firstDay = new Date(year, month, 1);
+    const startWeekday = (firstDay.getDay() + 6) % 7; // lunes=0
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    const cells = [];
+    for (let i = 0; i < startWeekday; i++) cells.push('');
+    for (let d = 1; d <= daysInMonth; d++) cells.push(String(d));
+    while (cells.length % 7 !== 0) cells.push('');
+
+    const weeks = [];
+    for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
+
+    const weekDays = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+
+    const today = new Date();
+    const isThisMonth = (today.getFullYear() === year && today.getMonth() === month);
+
+    const body = weeks.flat().map(val => {
+      if (!val) return '<div class="cal-cell empty"></div>';
+      const dayNum = Number(val);
+      const isToday = isThisMonth && dayNum === today.getDate();
+      const dateObj = new Date(year, month, dayNum);
+      const iso = dateObj.toISOString().slice(0, 10);
+      const dayInfo = this.#asistByDate.get(iso);
+      let statusCls = '';
+      let statusLabel = '';
+      let timeLabel = '';
+      const role = this.#user?.role || 'alumno';
+      if (dayInfo && dayInfo.asistio) {
+        statusCls = 'present';
+        const users = Array.from(dayInfo.byUser.values()).filter(u => u.asistio);
+        const opts = { hour: '2-digit', minute: '2-digit' };
+        if (role === 'alumno') {
+          // Para alumnos, sólo sus propios rangos horario (ya viene filtrado)
+          const u = users[0];
+          if (u) {
+            statusLabel = 'Asistió';
+            if (u.primeraEntrada && u.ultimaSalida) {
+              timeLabel = `${u.primeraEntrada.toLocaleTimeString('es-ES', opts)} - ${u.ultimaSalida.toLocaleTimeString('es-ES', opts)}`;
+            } else if (u.primeraEntrada) {
+              timeLabel = `Entrada ${u.primeraEntrada.toLocaleTimeString('es-ES', opts)}`;
+            }
+          }
+        } else {
+          // Profesores/admin: mostrar nombre de un alumno + indicador de más
+          if (users.length) {
+            const first = users[0];
+            const nombre = first.nombre || first.email || 'Alumno';
+            const extra = users.length > 1 ? ` +${users.length - 1}` : '';
+            statusLabel = `${nombre} asistió${extra}`;
+          }
+        }
+      }
+      return `<div class="cal-cell asist-cell${isToday ? ' today' : ''}" data-date="${iso}">
+        <div class="cal-day-num">${val}</div>
+        <div class="asist-status ${statusCls}">
+          ${statusLabel ? `<span class="pill">${statusLabel}</span>` : ''}
+          ${timeLabel ? `<span class="time">${timeLabel}</span>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+
+    return `
+      <div class="cal-grid asist-grid">
+        ${weekDays.map(w => `<div class="cal-head">${w}</div>`).join('')}
+        ${body}
+      </div>
+    `;
+  }
+
+  #renderAsistenciasSidebar(){
+    const role = this.#user?.role || 'professor';
+    const filterRole = role === 'admin' ? (this.#usersFilter.role || 'alumno') : 'alumno';
+    const list = (this.#usersList || []).filter(u => {
+      if (role === 'admin') {
+        return String(u.role || 'alumno') === filterRole;
+      }
+      // Profesor: solo alumnos
+      return String(u.role || 'alumno') === 'alumno';
+    });
+    const selectedId = (this.#asistSelectedUser && (this.#asistSelectedUser._id || this.#asistSelectedUser.id)) || null;
+    const roleSwitch = role === 'admin' ? `
+      <div class="row">
+        <label>Rol</label>
+        <select id="asist-role-filter">
+          <option value="alumno" ${filterRole==='alumno' ? 'selected' : ''}>Alumnos</option>
+          <option value="professor" ${filterRole==='professor' ? 'selected' : ''}>Profesores</option>
+        </select>
+      </div>
+    ` : '';
+    const rows = list.map(u => {
+      const uid = u._id || u.id;
+      const isSel = uid && uid === selectedId;
+      const avatarStyle = u.fotoPerfil ? ` style="background-image:url('${u.fotoPerfil}');background-size:cover;background-position:center;"` : '';
+      return `
+        <button class="asist-user-row${isSel ? ' active' : ''}" data-id="${uid}">
+          <div class="user-card small">
+            <div class="avatar" aria-hidden="true"${avatarStyle}></div>
+            <div class="user-info">
+              <div class="name">${u.nombre || 'Usuario'}</div>
+              <div class="email">${u.email || ''}</div>
+              <div class="role">${u.role || 'alumno'}</div>
+            </div>
+          </div>
+        </button>`;
+    }).join('');
+
+    return `
+      <aside class="asist-sidebar">
+        <div class="asist-sidebar-header">
+          <h4>${role === 'admin' ? 'Usuarios' : 'Alumnos'}</h4>
+          <p>Selecciona un usuario para ver sus asistencias.</p>
+        </div>
+        <div class="asist-filters">
+          ${roleSwitch}
+          <div class="row">
+            <label>Buscar</label>
+            <input type="search" id="asist-search" placeholder="Nombre o email..." />
+          </div>
+        </div>
+        <div class="asist-users-list" id="asist-users-list">
+          ${rows || '<div class="empty">No hay usuarios.</div>'}
+        </div>
+      </aside>
+    `;
+  }
+
+  #bindAsistencias(){
+    const reloadBtn = this.#root.querySelector('#reload-reg');
+    if (reloadBtn) reloadBtn.addEventListener('click', () => {
+      const role = this.#user?.role || 'alumno';
+      if (role === 'alumno') {
+        this.#loadRegistros(this.#user);
+      } else {
+        // Profesores/admin: si hay usuario seleccionado, recargar solo ese usuario;
+        // si no, recargar vista global del rol actual (alumnos/profesores).
+        if (this.#asistSelectedUser) {
+          this.#loadRegistros(this.#asistSelectedUser);
+        } else {
+          this.#loadRegistrosMesGlobal(this.#usersFilter.role || 'alumno');
+        }
+      }
+    });
+
+    const prev = this.#root.querySelector('#asist-prev');
+    const next = this.#root.querySelector('#asist-next');
+    if (prev) prev.addEventListener('click', () => { this.#shiftAsistMonth(-1); });
+    if (next) next.addEventListener('click', () => { this.#shiftAsistMonth(1); });
+
+    const grid = this.#root.querySelector('.asist-calendar');
+    if (grid) {
+      grid.addEventListener('click', (ev) => {
+        const cell = ev.target.closest('.cal-cell');
+        const iso = cell?.getAttribute('data-date');
+        if (!iso) return;
+        this.#openAsistDayModal(iso);
+      });
+    }
+
+    const role = this.#user?.role || 'alumno';
+    if (role === 'professor' || role === 'admin') {
+      const listEl = this.#root.querySelector('#asist-users-list');
+      if (listEl) {
+        listEl.querySelectorAll('.asist-user-row').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-id');
+            const user = (this.#usersList || []).find(u => (u._id || u.id) === id);
+            if (!user) return;
+            this.#loadRegistros(user);
+          });
+        });
+      }
+      const search = this.#root.querySelector('#asist-search');
+      if (search) {
+        let t = null;
+        search.addEventListener('input', () => {
+          clearTimeout(t);
+          t = setTimeout(() => {
+            const q = (search.value || '').trim().toLowerCase();
+            this.#usersFilter.q = q;
+            // Reutilizar la lógica de filtrado de usuarios
+            const roleFilter = role === 'admin' ? (this.#usersFilter.role || 'alumno') : 'alumno';
+            const users = (this.#usersList || []).filter(u => {
+              if (role === 'admin') {
+                if (String(u.role || 'alumno') !== roleFilter) return false;
+              } else if (String(u.role || 'alumno') !== 'alumno') {
+                return false;
+              }
+              if (!q) return true;
+              return (String(u.nombre || '').toLowerCase().includes(q) || String(u.email || '').toLowerCase().includes(q));
+            });
+            const listEl2 = this.#root.querySelector('#asist-users-list');
+            if (listEl2) {
+              listEl2.innerHTML = users.map(u => {
+                const uid = u._id || u.id;
+                const avatarStyle = u.fotoPerfil ? ` style="background-image:url('${u.fotoPerfil}');background-size:cover;background-position:center;"` : '';
+                return `
+                  <button class="asist-user-row" data-id="${uid}">
+                    <div class="user-card small">
+                      <div class="avatar" aria-hidden="true"${avatarStyle}></div>
+                      <div class="user-info">
+                        <div class="name">${u.nombre || 'Usuario'}</div>
+                        <div class="email">${u.email || ''}</div>
+                        <div class="role">${u.role || 'alumno'}</div>
+                      </div>
+                    </div>
+                  </button>`;
+              }).join('') || '<div class="empty">No hay usuarios.</div>';
+              // Rebind botones tras filtrar
+              listEl2.querySelectorAll('.asist-user-row').forEach(btn => {
+                btn.addEventListener('click', () => {
+                  const id = btn.getAttribute('data-id');
+                  const user = (this.#usersList || []).find(u => (u._id || u.id) === id);
+                  if (!user) return;
+                  this.#loadRegistros(user);
+                });
+              });
+            }
+
+            // Comportamiento extra: si solo queda un usuario en la búsqueda,
+            // cargamos directamente sus asistencias en el calendario.
+            if (users.length === 1) {
+              this.#loadRegistros(users[0]);
+            } else if (!users.length) {
+              // Si no hay resultados, volvemos a la vista global del rol actual
+              this.#asistSelectedUser = null;
+              this.#loadRegistrosMesGlobal(this.#usersFilter.role || 'alumno');
+            }
+          }, 180);
+        });
+      }
+
+      if (role === 'admin') {
+        const roleSelect = this.#root.querySelector('#asist-role-filter');
+        if (roleSelect) {
+          roleSelect.addEventListener('change', () => {
+            this.#usersFilter.role = roleSelect.value || 'alumno';
+            // Recargar registros globales filtrando por el nuevo rol
+            this.#loadRegistrosMesGlobal(this.#usersFilter.role);
+          });
+        }
+      }
+    }
+  }
+
+  #shiftAsistMonth(delta){
+    let m = this.#asistMonth + delta;
+    let y = this.#asistYear;
+    if (m < 0) { m = 11; y -= 1; }
+    if (m > 11) { m = 0; y += 1; }
+    this.#asistMonth = m;
+    this.#asistYear = y;
+    this.#buildAsistenciasIndex();
+    if (this.#state.section === 'asistencias') this.render();
+  }
+
+  async #openAsistDayModal(dateIso){
+    const dayInfo = this.#asistByDate.get(dateIso);
+    const fecha = new Date(dateIso + 'T00:00:00');
+    const pretty = fecha.toLocaleDateString('es-ES', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+    const modal = document.createElement('div');
+    modal.className = 'app-modal-backdrop';
+    const role = this.#user?.role || 'alumno';
+    const canEdit = role === 'professor' || role === 'admin';
+
+    let tableHead = '';
+    let tableBody = '';
+
+    if (!dayInfo || !dayInfo.asistio) {
+      tableHead = `<tr><th>Hora</th><th>Tipo</th><th>Origen</th>${canEdit ? '<th></th>' : ''}</tr>`;
+      tableBody = `<tr><td colspan="${canEdit ? 4 : 3}" class="empty">Sin fichajes este día.</td></tr>`;
+    } else if (role === 'alumno') {
+      // Alumno: listado de fichajes del propio usuario
+      const registros = Array.from(dayInfo.byUser.values()).flatMap(u => u.registros || []);
+      const rows = (registros || []).sort((a,b)=>{
+        const da = new Date(a.fechaHora).getTime();
+        const db = new Date(b.fechaHora).getTime();
+        return da - db;
+      }).map(r => {
+        const dt = new Date(r.fechaHora);
+        const time = dt.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+        const tipo = String(r.tipo || '').toLowerCase();
+        const id = r.id || r._id;
+        const origen = (r.uid === 'APP') ? 'APP (sesión)' : (r.uid || '');
+        return `<tr data-id="${id || ''}">
+          <td>${time}</td>
+          <td class="${tipo === 'entrada' ? 'ok' : 'warn'}">${tipo || ''}</td>
+          <td>${origen}</td>
+        </tr>`;
+      }).join('');
+      tableHead = '<tr><th>Hora</th><th>Tipo</th><th>Origen</th></tr>';
+      tableBody = rows || `<tr><td colspan="3" class="empty">Sin fichajes este día.</td></tr>`;
+    } else {
+      // Profesor/Admin: listado de usuarios que asistieron ese día
+      const users = Array.from(dayInfo.byUser.values()).filter(u => u.asistio);
+      const rows = users.map(u => {
+        const nombre = u.nombre || u.email || 'Usuario';
+        const email = u.email || '';
+        const userLabel = email ? `${nombre}<br><small>${email}</small>` : nombre;
+        let resumen = 'Asistió';
+        if (u.primeraEntrada && u.ultimaSalida) {
+          const opts = { hour: '2-digit', minute: '2-digit' };
+          resumen = `Asistió (${u.primeraEntrada.toLocaleTimeString('es-ES', opts)} - ${u.ultimaSalida.toLocaleTimeString('es-ES', opts)})`;
+        }
+        return `<tr data-user-id="${u.userId}">
+          <td>${userLabel}</td>
+          <td>${resumen}</td>
+          <td><button class="btn btn-ghost mini" data-act="detail">Ver detalle</button></td>
+        </tr>`;
+      }).join('');
+      tableHead = '<tr><th>Usuario</th><th>Resumen</th><th></th></tr>';
+      tableBody = rows || `<tr><td colspan="3" class="empty">Sin asistencias este día.</td></tr>`;
+    }
+
+    modal.innerHTML = `
+      <div class="app-modal event-modal">
+        <div class="app-modal-title">Asistencias del ${pretty}</div>
+        <div class="app-modal-body">
+          <table class="table asist-table">
+            <thead>
+              ${tableHead}
+            </thead>
+            <tbody>
+              ${tableBody}
+            </tbody>
+          </table>
+        </div>
+        <div class="app-modal-actions">
+          <button class="btn" id="asist-close">Cerrar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    const cleanup = () => { try { modal.remove(); } catch {} };
+    modal.addEventListener('click', (e)=>{ if (e.target === modal) cleanup(); });
+    const closeBtn = modal.querySelector('#asist-close');
+    if (closeBtn) closeBtn.addEventListener('click', cleanup);
+
+    if (canEdit) {
+      if (role === 'alumno') {
+        // No hay edición para el propio alumno en esta vista (solo lectura)
+        return;
+      }
+      const tbody = modal.querySelector('tbody');
+      if (tbody) {
+        tbody.querySelectorAll('button[data-act="detail"]').forEach(btn => {
+          btn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            const tr = btn.closest('tr');
+            const userId = tr?.getAttribute('data-user-id');
+            if (!userId) return;
+            const u = dayInfo.byUser.get(String(userId));
+            if (!u) return;
+            cleanup();
+            this.#openAsistUserDayDetail(dateIso, u);
+          });
+        });
+      }
+    }
+  }
+
+  // Detalle de fichajes para un usuario concreto en un día (profesor/admin)
+  #openAsistUserDayDetail(dateIso, userDay){
+    const fecha = new Date(dateIso + 'T00:00:00');
+    const pretty = fecha.toLocaleDateString('es-ES', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+    const modal = document.createElement('div');
+    modal.className = 'app-modal-backdrop';
+    const registros = (userDay.registros || []).slice().sort((a,b)=>{
+      const da = new Date(a.fechaHora).getTime();
+      const db = new Date(b.fechaHora).getTime();
+      return da - db;
+    });
+
+    // Resumen de entrada/salida para este usuario en ese día
+    let resumenHtml = '';
+    const opts = { hour: '2-digit', minute: '2-digit' };
+    if (userDay.primeraEntrada || userDay.ultimaSalida) {
+      const entradaTxt = userDay.primeraEntrada ? userDay.primeraEntrada.toLocaleTimeString('es-ES', opts) : '—';
+      const salidaTxt = userDay.ultimaSalida ? userDay.ultimaSalida.toLocaleTimeString('es-ES', opts) : '—';
+      resumenHtml = `<div class="asist-resumen-dia">Entrada: <strong>${entradaTxt}</strong> · Salida: <strong>${salidaTxt}</strong></div>`;
+    }
+
+    const rows = registros.map(r => {
+      const dt = new Date(r.fechaHora);
+      const time = dt.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+      const tipo = String(r.tipo || '').toLowerCase();
+      const id = r.id || r._id;
+      const origen = (r.uid === 'APP') ? 'APP (sesión)' : (r.uid || '');
+      return `<tr data-id="${id || ''}">
+        <td>${time}</td>
+        <td class="${tipo === 'entrada' ? 'ok' : 'warn'}">${tipo || ''}</td>
+        <td>${origen}</td>
+        <td><button class="btn btn-ghost mini" data-act="edit">Editar</button><button class="btn mini" data-act="delete">Borrar</button></td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="4" class="empty">Sin fichajes.</td></tr>';
+
+    modal.innerHTML = `
+      <div class="app-modal event-modal">
+        <div class="app-modal-title">Fichajes de ${userDay.nombre || userDay.email || 'usuario'} · ${pretty}</div>
+        <div class="app-modal-body">
+          ${resumenHtml}
+          <table class="table asist-table">
+            <thead>
+              <tr><th>Hora</th><th>Tipo</th><th>Origen</th><th></th></tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <div class="app-modal-actions">
+          <button class="btn" id="asist-detail-close">Cerrar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    const cleanup = () => { try { modal.remove(); } catch {} };
+    modal.addEventListener('click', (e)=>{ if (e.target === modal) cleanup(); });
+    const closeBtn = modal.querySelector('#asist-detail-close');
+    if (closeBtn) closeBtn.addEventListener('click', cleanup);
+
+    modal.querySelectorAll('tbody tr button').forEach(btn => {
+      btn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        const tr = btn.closest('tr');
+        const id = tr?.getAttribute('data-id');
+        const act = btn.getAttribute('data-act');
+        const reg = registros.find(r => (r.id || r._id) === id);
+        if (!id || !reg) return;
+        if (act === 'delete') {
+          const ok = await this.#confirmDialog('Eliminar fichaje', '¿Seguro que quieres eliminar este fichaje?', 'Eliminar', 'Cancelar');
+          if (!ok) return;
+          await this.#deleteRegistro(id);
+          cleanup();
+        } else if (act === 'edit') {
+          cleanup();
+          this.#openEditRegistroModal(reg);
+        }
+      });
+    });
+  }
+
+  async #deleteRegistro(id){
+    try {
+      const { ipcRenderer } = window.require ? window.require('electron') : {};
+      if (!ipcRenderer) return;
+      const jwt = (()=>{ try { return localStorage.getItem('wf_jwt'); } catch { return null; } })();
+      const res = await ipcRenderer.invoke('asistencias:delete-registro', { id, token: jwt });
+      if (res && res.ok) {
+        this.#toast('Registro eliminado.', 'ok');
+        this.#registros = (this.#registros || []).filter(r => (r.id || r._id) !== id);
+        this.#buildAsistenciasIndex();
+        if (this.#state.section === 'asistencias') this.render();
+      } else {
+        this.#toast(res?.error || 'No se pudo eliminar el registro.', 'err');
+      }
+    } catch (e) {
+      this.#toast(e?.message || 'Error eliminando registro.', 'err');
+    }
+  }
+
+  #openEditRegistroModal(reg){
+    const dt = new Date(reg.fechaHora);
+    const fecha = dt.toISOString().slice(0,10);
+    const hora = dt.toTimeString().slice(0,5);
+    const tipo = String(reg.tipo || '').toLowerCase() || 'entrada';
+    const modal = document.createElement('div');
+    modal.className = 'app-modal-backdrop';
+    modal.innerHTML = `
+      <div class="app-modal">
+        <div class="app-modal-title">Editar fichaje</div>
+        <div class="app-modal-body">
+          <div class="row two">
+            <div><label>Fecha</label><input type="date" id="ed-fecha" value="${fecha}" /></div>
+            <div><label>Hora</label><input type="time" id="ed-hora" value="${hora}" /></div>
+          </div>
+          <div class="row">
+            <label>Tipo</label>
+            <select id="ed-tipo">
+              <option value="entrada" ${tipo==='entrada' ? 'selected' : ''}>Entrada</option>
+              <option value="salida" ${tipo==='salida' ? 'selected' : ''}>Salida</option>
+            </select>
+          </div>
+        </div>
+        <div class="app-modal-actions">
+          <button class="btn btn-ghost" id="modal-cancel">Cancelar</button>
+          <button class="btn" id="modal-ok">Guardar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    const cleanup = () => { try { modal.remove(); } catch {} };
+    modal.addEventListener('click', (e)=>{ if (e.target === modal) cleanup(); });
+    const cancelBtn = modal.querySelector('#modal-cancel');
+    if (cancelBtn) cancelBtn.addEventListener('click', cleanup);
+    const okBtn = modal.querySelector('#modal-ok');
+    if (okBtn) {
+      okBtn.addEventListener('click', async () => {
+        const fechaVal = modal.querySelector('#ed-fecha')?.value || '';
+        const horaVal = modal.querySelector('#ed-hora')?.value || '';
+        const tipoVal = modal.querySelector('#ed-tipo')?.value || 'entrada';
+        if (!fechaVal || !horaVal) {
+          this.#toast('Completa fecha y hora.', 'err');
+          return;
+        }
+        const iso = `${fechaVal}T${horaVal}:00Z`;
+        await this.#updateRegistro(reg, iso, tipoVal);
+        cleanup();
+      });
+    }
+  }
+
+  async #updateRegistro(reg, fechaHoraIso, tipo){
+    try {
+      const { ipcRenderer } = window.require ? window.require('electron') : {};
+      if (!ipcRenderer) return;
+      const jwt = (()=>{ try { return localStorage.getItem('wf_jwt'); } catch { return null; } })();
+      const id = reg.id || reg._id;
+      const res = await ipcRenderer.invoke('asistencias:update-registro', { id, fechaHoraIso, tipo, token: jwt });
+      if (res && res.ok) {
+        this.#toast('Registro actualizado.', 'ok');
+        const updated = res.registro || null;
+        if (updated) {
+          const idx = (this.#registros || []).findIndex(r => (r.id || r._id) === id);
+          if (idx >= 0) this.#registros[idx] = updated;
+        }
+        this.#buildAsistenciasIndex();
+        if (this.#state.section === 'asistencias') this.render();
+      } else {
+        this.#toast(res?.error || 'No se pudo actualizar el registro.', 'err');
+      }
+    } catch (e) {
+      this.#toast(e?.message || 'Error actualizando registro.', 'err');
     }
   }
 
@@ -914,7 +1594,6 @@ export class HomeView {
       const { ipcRenderer } = window.require ? window.require('electron') : {};
       if (!ipcRenderer) return;
       const listEl = this.#root.querySelector('#users-admin-list');
-      if (!listEl) return;
       if (!this.#usersList.length || force) {
         const list = await ipcRenderer.invoke('nfc:list-users-with-nfc');
         this.#usersList = (list||[]).map(u=>({
@@ -926,12 +1605,12 @@ export class HomeView {
         }));
       }
       this.#usersFilter.role = role;
-      this.#applyUsersFiltersAndRender(listEl);
+      if (listEl) this.#applyUsersFiltersAndRender(listEl);
       const qInput = this.#root.querySelector('#users-filter-q');
-      if (qInput) { let t=null; qInput.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(()=>{ this.#usersFilter.q = (qInput.value||'').trim().toLowerCase(); this.#applyUsersFiltersAndRender(listEl); }, 180); }); }
+      if (qInput && listEl) { let t=null; qInput.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(()=>{ this.#usersFilter.q = (qInput.value||'').trim().toLowerCase(); this.#applyUsersFiltersAndRender(listEl); }, 180); }); }
       // Actualizar contador
       const countEl = this.#root.querySelector('.users-count');
-      if (countEl) {
+      if (countEl && listEl) {
         const count = (this.#usersList||[]).filter(u=>String(u.role||'alumno')===role).length;
         countEl.textContent = `Total: ${count}`;
       }

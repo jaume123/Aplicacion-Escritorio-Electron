@@ -32,6 +32,12 @@ Aplicación de escritorio (Electron) con backend Spring Boot + MongoDB para gest
   - Al hacer clic en la foto se abre un popup con la imagen ampliada, mostrando el nombre del usuario.
   - Botón "Nueva foto" permite seleccionar una imagen local; se guarda como `fotoPerfil` en MongoDB a través de `/api/usuarios/actualizar` y se cachea también en `localStorage`.
   - La foto se reutiliza en: avatar lateral de la app, tarjeta de "Mi Perfil", listas de usuarios admin y gestión de NFC (avatars por usuario).
+- **Gestión de asistencias con calendario**:
+  - Los alumnos ven un calendario mensual donde cada día muestra si han asistido a clase (basado en fichajes) y, al pulsar en un día, se detalla la hora de entrada/salida.
+  - Los profesores pueden seleccionar a cualquier alumno desde un panel lateral y ver su calendario de asistencias, con la misma visualización de días asistidos y franjas horarias.
+  - Los administradores pueden ver y gestionar las asistencias tanto de alumnos como de profesores.
+  - Profesores y administradores pueden editar la fecha/hora y el tipo (entrada/salida) de un fichaje concreto o eliminarlo si fue un error.
+  - La UX de asistencias reutiliza el tema futurista (cards, chips de estado "Asistió" y modales) para integrarse con el resto de la aplicación.
 - Calendario mensual con eventos compartidos (exámenes, viajes, eventos de centro).
   - Profesores y admin pueden crear/editar/eliminar eventos.
   - Alumnos ven los eventos en su calendario y pueden abrir el detalle en un modal de solo lectura.
@@ -81,6 +87,8 @@ npm start
 - POST `/api/usuarios/registrar-entrada-salida` → body `{ uid, userId }` (JWT) → alterna entrada/salida.
 - POST `/api/usuarios/registrar-entrada-salida-app` → body `{ userId, tipo }` (JWT) → registra entrada/salida asociada a la sesión de la app (sin NFC).
 - GET  `/api/usuarios/registros?userId=...&limit=50` (JWT) → listado asistencias.
+- POST `/api/usuarios/registros/actualizar` → body `{ id, fechaHoraIso, tipo }` (JWT) → actualiza la fecha/hora y el tipo de un registro de asistencia.
+- POST `/api/usuarios/registros/eliminar` → body `{ id }` (JWT) → elimina un registro de asistencia.
 - POST `/api/usuarios/actualizar` → body `{ id, ...fields }` (JWT) → actualiza perfil.
 - GET  `/api/eventos?year=YYYY&month=MM` (JWT) → lista eventos del mes.
 - POST `/api/eventos` (JWT, rol PROFESOR/ADMIN) → crea evento.

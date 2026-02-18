@@ -330,6 +330,75 @@ app.on('ready', () => {
     }
   });
 
+  // Listar registros de entrada/salida del centro en un mes (para vista agregada de asistencias)
+  ipcMain.handle('asistencias:list-mes', async (event, ctx) => {
+    try {
+      const { year, month, token } = ctx || {};
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      const url = `http://localhost:8080/api/usuarios/registros-mes?year=${encodeURIComponent(year||0)}&month=${encodeURIComponent(month||0)}`;
+      const res = await fetch(url, { method: 'GET', headers });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+      if (!res.ok) {
+        const msg = (data && (data.error || data.message)) || (text && text.trim()) || `HTTP ${res.status}`;
+        return { ok: false, error: msg };
+      }
+      return data || { ok: true, registros: [] };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // Actualizar un registro de asistencia (entrada/salida)
+  ipcMain.handle('asistencias:update-registro', async (event, ctx) => {
+    try {
+      const { id, fechaHoraIso, tipo, token } = ctx || {};
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      const res = await fetch('http://localhost:8080/api/usuarios/registros/actualizar', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ id, fechaHoraIso, tipo })
+      });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+      if (!res.ok) {
+        const msg = (data && (data.error || data.message)) || (text && text.trim()) || `HTTP ${res.status}`;
+        return { ok: false, error: msg };
+      }
+      return data || { ok: true };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // Eliminar un registro de asistencia (entrada/salida)
+  ipcMain.handle('asistencias:delete-registro', async (event, ctx) => {
+    try {
+      const { id, token } = ctx || {};
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      const res = await fetch('http://localhost:8080/api/usuarios/registros/eliminar', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ id })
+      });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+      if (!res.ok) {
+        const msg = (data && (data.error || data.message)) || (text && text.trim()) || `HTTP ${res.status}`;
+        return { ok: false, error: msg };
+      }
+      return data || { ok: true };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
   // Admin: actualizar perfil de usuario
   ipcMain.handle('admin:update-user', async (event, ctx) => {
     try {
