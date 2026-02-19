@@ -1,3 +1,44 @@
+/* Calendario asistencias modo alumno: más ancho y menos alto */
+
+
+.asist-calendar-wide {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  width: 100%;
+  margin: 0 auto;
+  max-width: 1200px;
+  min-width: 900px;
+  padding: 0 2vw;
+}
+.asist-grid-wide {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: 1fr;
+  width: 100%;
+  max-width: 1200px;
+  min-width: 900px;
+  gap: 32px !important;
+  border-radius: 18px;
+  margin: 0 auto;
+  justify-items: center;
+  align-items: center;
+}
+.asist-grid-wide .cal-cell {
+  width: 100%;
+  aspect-ratio: 1/1;
+  min-width: 90px;
+  max-width: 160px;
+  min-height: 90px;
+  max-height: 160px;
+  margin: 0;
+  padding: 0.5em 0.2em;
+  font-size: 1.13em;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
 /* --- NFC Floating Menu --- */
 .nfc-float-menu {
   position: fixed;
@@ -290,11 +331,62 @@ pre::-webkit-scrollbar { display: none; }
 .asist-user-row.active .user-card.small { border-color: rgba(126,240,255,0.6); box-shadow: 0 0 16px rgba(126,240,255,0.35); }
 
 .asist-main { display: flex; flex-direction: column; gap: 12px; }
-.asist-header { display: grid; grid-template-columns: minmax(0, 1.4fr) auto; gap: 10px; align-items: center; margin-bottom: 4px; }
-.asist-header-text h3 { margin: 0 0 4px; font-size: 20px; }
-.asist-sub { margin: 0; font-size: 12px; color: var(--muted); }
-.asist-header-controls { display: inline-flex; gap: 8px; align-items: center; }
-.asist-header-controls .month { min-width: 140px; text-align: center; font-weight: 600; }
+
+/* Nueva cabecera asistencias: más ancha, moderna y responsiva */
+.asist-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2rem;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+  padding: 0.5em 0.5em 0.5em 0;
+}
+.asist-header-text {
+  min-width: 220px;
+}
+.asist-header-text h3 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+}
+.asist-sub {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.asist-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.asist-header-controls .icon {
+  font-size: 1.5em;
+  background: none;
+  border: none;
+  color: var(--accent2);
+  transition: color 0.2s;
+  cursor: pointer;
+}
+.asist-header-controls .icon:hover {
+  color: var(--accent);
+}
+.asist-header-controls .month {
+  min-width: 140px;
+  text-align: center;
+  font-weight: 600;
+  font-size: 1.1em;
+  letter-spacing: 0.5px;
+  color: var(--text);
+}
+.asist-header-controls .btn {
+  margin-left: 1.5em;
+}
 
 .asist-calendar { border: 1px solid var(--border); border-radius: 18px; background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0)); padding: clamp(14px, 2vh, 18px); box-shadow: 0 10px 30px rgba(0,0,0,0.35); animation: fadeSlide 500ms ease-out both; }
 .asist-grid { grid-auto-rows: clamp(68px, 9.5vh, 110px); }

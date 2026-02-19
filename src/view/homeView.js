@@ -867,20 +867,45 @@ export class HomeView {
 
     const showUserSelector = role === 'professor' || role === 'admin';
 
+    // Si es alumno, usar el diseño clásico centrado y botones antiguos
+    if (role === 'alumno') {
+      return `
+        <div class="asistencias asistencias-layout" style="display: flex; flex-direction: column; align-items: center; width: 100%;">
+          <div class="asist-main" style="width: 100%; display: flex; flex-direction: column; align-items: center;">
+            <div class="asist-header" style="display: flex; flex-direction: column; align-items: center; gap: 0.5em; margin-bottom: 1.5em;">
+              <h3 style="color: var(--accent); margin-bottom: 0.2em;">${titulo}</h3>
+              <p class="asist-sub" style="font-size: 0.95em; color: #b0b8c9; margin: 0 0 0.5em 0;">Haz clic en un día para ver la hora de entrada y salida.</p>
+              <div style="display: flex; align-items: center; gap: 0.5em; margin-top: 0.5em;">
+                <button class="icon" id="asist-prev" aria-label="Mes anterior">‹</button>
+                <div class="month" style="min-width: 120px; text-align: center; font-weight: 600;">${monthLabel}</div>
+                <button class="icon" id="asist-next" aria-label="Mes siguiente">›</button>
+                <button class="btn btn-ghost" id="reload-reg" style="margin-left: 1em;">Recargar</button>
+              </div>
+            </div>
+            <div class="asist-calendar asist-calendar-wide" style="display: flex; justify-content: center; align-items: center; width: 100%;">
+              <div style="width: 100%; display: flex; justify-content: center;">
+                ${this.#renderAsistenciasCalendar('wide')}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+    // Otros roles: diseño moderno y ancho
     return `
       <div class="asistencias asistencias-layout">
         ${showUserSelector ? this.#renderAsistenciasSidebar() : ''}
         <div class="asist-main">
-          <div class="asist-header">
-            <div class="asist-header-text">
-              <h3>${titulo}</h3>
-              <p class="asist-sub">Haz clic en un día para ver la hora de entrada y salida.</p>
+          <div class="asist-header" style="display: flex; align-items: center; justify-content: space-between; gap: 2rem; flex-wrap: wrap;">
+            <div class="asist-header-text" style="min-width: 220px;">
+              <h3 style="margin-bottom: 0.2em;">${titulo}</h3>
+              <p class="asist-sub" style="font-size: 0.95em; color: #b0b8c9; margin: 0;">Haz clic en un día para ver la hora de entrada y salida.</p>
             </div>
-            <div class="asist-header-controls">
-              <button class="icon" id="asist-prev" aria-label="Mes anterior">‹</button>
-              <div class="month">${monthLabel}</div>
-              <button class="icon" id="asist-next" aria-label="Mes siguiente">›</button>
-              <button class="btn btn-ghost" id="reload-reg">Recargar</button>
+            <div class="asist-header-controls" style="display: flex; align-items: center; gap: 0.5rem; flex: 1; justify-content: flex-end;">
+              <button class="icon" id="asist-prev" aria-label="Mes anterior" style="font-size: 1.5em;">‹</button>
+              <div class="month" style="min-width: 140px; text-align: center; font-weight: 600; font-size: 1.1em; letter-spacing: 0.5px;">${monthLabel}</div>
+              <button class="icon" id="asist-next" aria-label="Mes siguiente" style="font-size: 1.5em;">›</button>
+              <button class="btn btn-ghost" id="reload-reg" style="margin-left: 1.5em;">Recargar</button>
             </div>
           </div>
           <div class="asist-calendar">
@@ -1014,7 +1039,7 @@ export class HomeView {
     return `${label} ${this.#asistYear}`;
   }
 
-  #renderAsistenciasCalendar(){
+  #renderAsistenciasCalendar(mode = ''){
     const year = this.#asistYear;
     const month = this.#asistMonth;
     const firstDay = new Date(year, month, 1);
@@ -1079,6 +1104,15 @@ export class HomeView {
       </div>`;
     }).join('');
 
+    // Si modo wide, grid más horizontal y menos alto
+    if (mode === 'wide') {
+      return `
+        <div class="cal-grid asist-grid asist-grid-wide">
+          ${weekDays.map(w => `<div class="cal-head">${w}</div>`).join('')}
+          ${body}
+        </div>
+      `;
+    }
     return `
       <div class="cal-grid asist-grid">
         ${weekDays.map(w => `<div class="cal-head">${w}</div>`).join('')}
