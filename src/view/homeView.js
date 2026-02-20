@@ -24,10 +24,11 @@ export class HomeView {
   #eventsMonth = null;
   #registros = [];
   #usersList = [];
-  #usersFilter = { role: 'alumno', q: '' };
+  #usersFilter = { role: 'alumno', q: '', dep: 'all', course: 'all' };
   // Gestión NFC (estado y filtros)
   #nfcUsers = [];
   #nfcFilter = { role: 'all', status: 'all', q: '' };
+  #departamentos = [];
   #menuItems = {
     alumno: [
       { id: 'mi-perfil', label: 'Mi Perfil' },
@@ -43,6 +44,7 @@ export class HomeView {
       { id: 'anadir-evento', label: 'Añadir Evento' },
       { id: 'crear-alumno', label: 'Crear Alumno' },
       { id: 'horario', label: 'Horario' },
+      { id: 'departamentos', label: 'Departamentos' },
       { id: 'contactar', label: 'Contactar' },
     ],
     admin: [
@@ -115,7 +117,8 @@ export class HomeView {
                 this.#state.section === 'lista-alumnos' ? this.#renderListaUsuarios('alumno') :
                 this.#state.section === 'lista-profesores' ? this.#renderListaUsuarios('professor') :
                 this.#state.section === 'crear-alumno' ? this.#renderCrearUsuario('alumno') :
-                this.#state.section === 'crear-profesor' ? this.#renderCrearUsuario('professor') : `
+                this.#state.section === 'crear-profesor' ? this.#renderCrearUsuario('professor') :
+                this.#state.section === 'departamentos' ? this.#renderDepartamentos() : `
                 <div class="panel-header">
                   <button class="icon" aria-label="Mes anterior" id="cal-prev">‹</button>
                   <div class="month">${this.#monthLabel()}</div>
@@ -303,6 +306,15 @@ export class HomeView {
     const dni = this.#user?.dni || '';
     const nombre = this.#user?.nombre || '';
     const apellidos = this.#user?.apellidos || '';
+    const depsArr = Array.isArray(this.#user?.departamentos) ? this.#user.departamentos : [];
+    const depsNames = depsArr.map(d => d?.nombre || d).filter(Boolean);
+    const depsLabel = depsNames.length ? depsNames.join(', ') : 'Sin departamento';
+    const curso = this.#user?.curso || '';
+    const prettyCurso = curso
+      ? (curso.startsWith('DAW') ? (curso.endsWith('1') ? '1º DAW' : '2º DAW')
+        : curso.startsWith('DAM') ? (curso.endsWith('1') ? '1º DAM' : '2º DAM')
+        : curso)
+      : '';
     const rolePrettyMap = { alumno: 'Alumno', professor: 'Profesor', admin: 'Administrador' };
     const rolePretty = rolePrettyMap[roleLabel] || 'Alumno';
     let roleDesc = '';
@@ -337,6 +349,16 @@ export class HomeView {
               <span class="label">Apellidos</span>
               <span class="value">${apellidos || 'No especificado'}</span>
             </div>
+            ${['professor','admin'].includes(roleLabel) ? `
+            <div class="profile-row">
+              <span class="label">Departamentos</span>
+              <span class="value">${depsLabel}</span>
+            </div>` : ''}
+            ${roleLabel === 'alumno' ? `
+            <div class="profile-row">
+              <span class="label">Curso</span>
+              <span class="value">${prettyCurso || 'Sin curso'}</span>
+            </div>` : ''}
             <div class="profile-row">
               <span class="label">Contraseña</span>
               <span class="value">******</span>
@@ -720,6 +742,8 @@ export class HomeView {
           this.#state.section = 'horario';
           this.render();
         } else if (id === 'gestion-nfc' && this.#user?.role === 'admin') {
+          // Al entrar en gestión NFC, restablecer filtros
+          this.#nfcFilter = { role: 'all', status: 'all', q: '' };
           this.#state.section = 'gestion-nfc';
           this.render();
         } else if (id === 'asistencias') {
@@ -754,6 +778,9 @@ export class HomeView {
         } else if (id === 'crear-profesores' && this.#user?.role === 'admin') {
           this.#state.section = 'crear-profesor';
           this.render();
+        } else if (id === 'departamentos' && ['professor','admin'].includes(this.#user?.role)) {
+          this.#state.section = 'departamentos';
+          this.render();
         } else if (id === 'anadir-evento' && ['professor','admin'].includes(this.#user?.role)) {
           // Ir al panel (calendario) y abrir ayuda para eventos
           this.#state.section = 'panel';
@@ -765,6 +792,289 @@ export class HomeView {
         }
       });
     });
+  }
+
+  // ---------- Crear Usuario (Admin/Profesor) ----------
+  #renderDepartamentos() {
+    const role = this.#user?.role || 'alumno';
+    if (!['professor','admin'].includes(role)) {
+      return `<div class="empty">No tienes permisos para gestionar departamentos.</div>`;
+    }
+    const listHtml = `
+      <div class="dept-layout">
+        <div class="dept-header card">
+          <div>
+            <h3>Departamentos</h3>
+            <p class="muted">Asigna DAM/DAW y curso (1º/2º) a profesores y alumnos.</p>
+          </div>
+        </div>
+        <div class="dept-main">
+          <section class="dept-self card">
+            <div class="dept-section-header">
+              <div>
+                <h4>Mis departamentos</h4>
+                <p class="muted small">Selecciona en qué ciclos impartes clase.</p>
+              </div>
+              <div class="dept-badges" id="dept-self-badges"></div>
+            </div>
+            <div class="dept-options">
+              <label class="pill-toggle"><input type="checkbox" value="DAM" class="dept-self-opt"/> <span>DAM</span></label>
+              <label class="pill-toggle"><input type="checkbox" value="DAW" class="dept-self-opt"/> <span>DAW</span></label>
+            </div>
+            <div class="dept-actions">
+              <button class="btn" id="dept-self-save">Guardar mis departamentos</button>
+            </div>
+          </section>
+          <section class="dept-users card">
+            <div class="dept-users-header">
+              <div>
+                <h4>Alumnos</h4>
+                <p class="muted small">Marca el curso de cada alumno.</p>
+              </div>
+              <div class="row grow">
+                <label>Buscar alumno</label>
+                <input type="search" id="dept-users-q" placeholder="Nombre o email..." />
+              </div>
+            </div>
+            <div id="dept-users-list" class="dept-users-list">
+              <div class="loading">Cargando alumnos...</div>
+            </div>
+            <div class="dept-prof-section">
+              <div class="dept-users-header">
+                <div>
+                  <h4>Profesores</h4>
+                  <p class="muted small">Asigna el departamento (DAM/DAW) de cada profesor.</p>
+                </div>
+              </div>
+              <div id="dept-prof-list" class="dept-users-list">
+                <div class="loading">Cargando profesores...</div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>`;
+    // Devolver contenedor; el binding se hace tras render
+    setTimeout(() => { this.#bindDepartamentos(); }, 0);
+    return listHtml;
+  }
+
+  async #ensureDepartamentosLoaded() {
+    if (this.#departamentos && this.#departamentos.length) return;
+    try {
+      let token = null;
+      try { token = localStorage.getItem('wf_jwt'); } catch { token = null; }
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      const res = await fetch('http://localhost:8080/api/departamentos', { headers });
+      const data = await res.json();
+      this.#departamentos = Array.isArray(data) ? data : [];
+    } catch (e) {
+      this.#departamentos = [];
+      this.#toast(e?.message || 'No se pudieron cargar los departamentos.', 'err');
+    }
+  }
+
+  async #bindDepartamentos() {
+    const role = this.#user?.role || 'alumno';
+    if (!['professor','admin'].includes(role)) return;
+    await this.#ensureDepartamentosLoaded();
+
+    // Mis departamentos (usuario actual)
+    const selfBadges = this.#root.querySelector('#dept-self-badges');
+    const selfChecks = Array.from(this.#root.querySelectorAll('.dept-self-opt'));
+    const currentDeps = Array.isArray(this.#user?.departamentos) ? this.#user.departamentos : [];
+    const currentNames = currentDeps.map(d => d.nombre || '').filter(Boolean);
+    if (selfBadges) {
+      if (!currentNames.length) selfBadges.innerHTML = '<span class="empty">Sin departamento</span>';
+      else selfBadges.innerHTML = currentNames.map(n => `<span class="pill">${n}</span>`).join('');
+    }
+    selfChecks.forEach(chk => {
+      chk.checked = currentNames.includes(chk.value);
+    });
+
+    const saveSelfBtn = this.#root.querySelector('#dept-self-save');
+    if (saveSelfBtn) {
+      saveSelfBtn.addEventListener('click', async () => {
+        const selectedNames = selfChecks.filter(c => c.checked).map(c => c.value);
+        const ids = this.#mapDeptNamesToIds(selectedNames);
+        const userId = this.#user?.id || this.#user?._id;
+        if (!userId) return;
+        try {
+          let token = null;
+          try { token = localStorage.getItem('wf_jwt'); } catch { token = null; }
+          const headers = { 'Content-Type': 'application/json' };
+          if (token) headers['Authorization'] = 'Bearer ' + token;
+          const res = await fetch(`http://localhost:8080/api/usuarios/${userId}/departamentos`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ departamentos: ids }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error((data && (data.error || data.message)) || 'Error guardando departamentos');
+          this.#user = { ...this.#user, departamentos: data.departamentos || data }; // fallback
+          this.#toast('Departamentos actualizados.', 'ok');
+          const nuevos = Array.isArray(this.#user.departamentos) ? this.#user.departamentos : [];
+          const names = nuevos.map(d=>d.nombre||'').filter(Boolean);
+          if (selfBadges) selfBadges.innerHTML = names.length ? names.map(n=>`<span class="pill">${n}</span>`).join('') : '<span class="empty">Sin departamento</span>';
+        } catch (e) {
+          this.#toast(e?.message || 'No se pudieron guardar los departamentos.', 'err');
+        }
+      });
+    }
+
+    // Lista de alumnos (solo curso, no departamentos directos)
+    const listEl = this.#root.querySelector('#dept-users-list');
+    const profListEl = this.#root.querySelector('#dept-prof-list');
+    const qInput = this.#root.querySelector('#dept-users-q');
+    if (!listEl) return;
+    await this.#loadUsers('alumno', true);
+    const renderList = () => {
+      const q = (qInput && qInput.value || '').trim().toLowerCase();
+      const alumnos = (this.#usersList || []).filter(u => String(u.role||'alumno')==='alumno').filter(u => {
+        if (!q) return true;
+        return String(u.nombre||'').toLowerCase().includes(q) || String(u.email||'').toLowerCase().includes(q);
+      });
+      listEl.innerHTML = alumnos.map(u => {
+        const deps = Array.isArray(u.departamentos) ? u.departamentos : [];
+        const names = deps.map(d=>d.nombre||'').filter(Boolean);
+        const curso = u.curso || '';
+        let selectedYear = '';
+        if (/1/.test(curso)) selectedYear = '1';
+        else if (/2/.test(curso)) selectedYear = '2';
+        let selectedDept = '';
+        if (curso.startsWith('DAW')) selectedDept = 'DAW';
+        else if (curso.startsWith('DAM')) selectedDept = 'DAM';
+        return `
+          <div class="dept-user-row" data-id="${u._id}">
+            <div class="info">
+              <div class="name">${u.nombre||'Alumno'}</div>
+              <div class="email">${u.email||''}</div>
+            </div>
+            <div class="opts">
+              <div class="dept-user-curso">
+                <label>Curso</label>
+                <select class="dept-user-course">
+                  <option value="">Sin curso</option>
+                  <option value="DAM1" ${(selectedDept==='DAM' && selectedYear==='1')?'selected':''}>1º DAM</option>
+                  <option value="DAM2" ${(selectedDept==='DAM' && selectedYear==='2')?'selected':''}>2º DAM</option>
+                  <option value="DAW1" ${(selectedDept==='DAW' && selectedYear==='1')?'selected':''}>1º DAW</option>
+                  <option value="DAW2" ${(selectedDept==='DAW' && selectedYear==='2')?'selected':''}>2º DAW</option>
+                </select>
+              </div>
+              <button class="btn" data-act="save">Guardar</button>
+            </div>
+          </div>`;
+      }).join('') || '<div class="empty">No hay alumnos.</div>';
+
+      if (profListEl) {
+        const profes = (this.#usersList || []).filter(u => String(u.role||'alumno')==='professor').filter(u => {
+          if (!q) return true;
+          return String(u.nombre||'').toLowerCase().includes(q) || String(u.email||'').toLowerCase().includes(q);
+        });
+        profListEl.innerHTML = profes.map(u => {
+          const deps = Array.isArray(u.departamentos) ? u.departamentos : [];
+          const names = deps.map(d=> (d && d.nombre) ? d.nombre : d).filter(Boolean).map(s => String(s).toUpperCase());
+          const hasDAM = names.includes('DAM');
+          const hasDAW = names.includes('DAW');
+          return `
+          <div class="dept-user-row dept-prof-row" data-id="${u._id}">
+            <div class="info">
+              <div class="name">${u.nombre||'Profesor'}</div>
+              <div class="email">${u.email||''}</div>
+            </div>
+            <div class="opts">
+              <div class="dept-user-curso">
+                <label>Departamentos</label>
+                <div class="dept-prof-opts">
+                  <label class="pill-toggle"><input type="checkbox" value="DAM" class="dept-prof-opt" ${hasDAM?'checked':''}/> <span>DAM</span></label>
+                  <label class="pill-toggle"><input type="checkbox" value="DAW" class="dept-prof-opt" ${hasDAW?'checked':''}/> <span>DAW</span></label>
+                </div>
+              </div>
+              <button class="btn" data-act="save-prof">Guardar</button>
+            </div>
+          </div>`;
+        }).join('') || '<div class="empty">No hay profesores.</div>';
+      }
+
+      listEl.querySelectorAll('.dept-user-row .btn[data-act="save"]').forEach(btn => {
+        btn.addEventListener('click', async (ev) => {
+          const row = ev.currentTarget.closest('.dept-user-row');
+          const id = row?.getAttribute('data-id');
+          if (!id) return;
+          const courseSel = row.querySelector('.dept-user-course');
+          const curso = courseSel ? String(courseSel.value||'').trim() : '';
+          const ids = []; // alumnos ya no tienen departamentos propios
+          try {
+            let token = null;
+            try { token = localStorage.getItem('wf_jwt'); } catch { token = null; }
+            const headers = { 'Content-Type': 'application/json' };
+            if (token) headers['Authorization'] = 'Bearer ' + token;
+            const res = await fetch(`http://localhost:8080/api/usuarios/${id}/departamentos`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({ departamentos: ids, curso }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error((data && (data.error || data.message)) || 'Error guardando departamentos');
+            const deps = (data && data.departamentos) || data || [];
+            const idx = (this.#usersList||[]).findIndex(x=>x._id===id);
+            if (idx >= 0) this.#usersList[idx] = { ...this.#usersList[idx], departamentos: deps, curso: curso || this.#usersList[idx].curso };
+            this.#toast('Departamentos del alumno actualizados.', 'ok');
+          } catch (e) {
+            this.#toast(e?.message || 'No se pudieron guardar los departamentos.', 'err');
+          }
+        });
+      });
+
+      if (profListEl) {
+        profListEl.querySelectorAll('.dept-prof-row .btn[data-act="save-prof"]').forEach(btn => {
+          btn.addEventListener('click', async (ev) => {
+            const row = ev.currentTarget.closest('.dept-prof-row');
+            const id = row?.getAttribute('data-id');
+            if (!id) return;
+            const checks = Array.from(row.querySelectorAll('.dept-prof-opt'));
+            const selectedNames = checks.filter(c => c.checked).map(c => c.value);
+            const ids = this.#mapDeptNamesToIds(selectedNames);
+            try {
+              let token = null;
+              try { token = localStorage.getItem('wf_jwt'); } catch { token = null; }
+              const headers = { 'Content-Type': 'application/json' };
+              if (token) headers['Authorization'] = 'Bearer ' + token;
+              const res = await fetch(`http://localhost:8080/api/usuarios/${id}/departamentos`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ departamentos: ids }),
+              });
+              const data = await res.json();
+              if (!res.ok) throw new Error((data && (data.error || data.message)) || 'Error guardando departamentos');
+              const deps = (data && data.departamentos) || data || [];
+              const idx = (this.#usersList||[]).findIndex(x=>x._id===id);
+              if (idx >= 0) this.#usersList[idx] = { ...this.#usersList[idx], departamentos: deps };
+              this.#toast('Departamentos del profesor actualizados.', 'ok');
+            } catch (e) {
+              this.#toast(e?.message || 'No se pudieron guardar los departamentos.', 'err');
+            }
+          });
+        });
+      }
+    };
+
+    renderList();
+    if (qInput) {
+      let t = null;
+      qInput.addEventListener('input', () => {
+        clearTimeout(t);
+        t = setTimeout(renderList, 150);
+      });
+    }
+  }
+
+  #mapDeptNamesToIds(names) {
+    const wanted = Array.isArray(names) ? names : [];
+    return wanted.map(n => {
+      const dep = (this.#departamentos||[]).find(d => String(d.nombre||'').toUpperCase() === String(n||'').toUpperCase());
+      return dep ? dep.id : null;
+    }).filter(Boolean);
   }
 
   // ---------- Crear Usuario (Admin/Profesor) ----------
@@ -1592,6 +1902,22 @@ export class HomeView {
       return (String(u.nombre||'').toLowerCase().includes(q) || String(u.email||'').toLowerCase().includes(q));
     }).map(u=>{
       const has = !!u.nfcToken;
+      const depsArr = Array.isArray(u.departamentos) ? u.departamentos : [];
+      const depsNames = depsArr.map(d => d?.nombre || d).filter(Boolean);
+      const curso = u.curso || '';
+      let deptLabel;
+      if (role === 'alumno') {
+        if (curso.startsWith('DAW')) deptLabel = 'DAW';
+        else if (curso.startsWith('DAM')) deptLabel = 'DAM';
+        else deptLabel = 'Sin departamento';
+      } else {
+        deptLabel = depsNames.length ? depsNames.join(', ') : 'Sin departamento';
+      }
+      const prettyCurso = curso
+        ? (curso.startsWith('DAW') ? (curso.endsWith('1') ? '1º DAW' : '2º DAW')
+          : curso.startsWith('DAM') ? (curso.endsWith('1') ? '1º DAM' : '2º DAM')
+          : curso)
+        : '';
       return `<div class="user-row" data-id="${u._id}">
         <div class="user-card small">
           <div class="avatar" aria-hidden="true"></div>
@@ -1599,6 +1925,10 @@ export class HomeView {
             <div class="name">${u.nombre||'Usuario'}</div>
             <div class="email">${u.email||''}</div>
             <div class="role">Rol: ${u.role||'alumno'}</div>
+            <div class="extra">
+              <span class="pill pill-soft">Departamento: ${deptLabel}</span>
+              ${prettyCurso ? `<span class="pill pill-soft">Curso: ${prettyCurso}</span>` : ''}
+            </div>
           </div>
         </div>
         <div class="user-row-status"><span class="status-pill ${has?'ok':'warn'}">${has?'Con NFC':'Sin NFC'}</span></div>
@@ -1611,6 +1941,22 @@ export class HomeView {
           <p class="users-count">${rows ? '' : 'Listado filtrado por rol. Usa buscar para localizar.'}</p>
         </div>
         <div class="nfc-filters">
+          <div class="row">
+            <label>${role==='alumno' ? 'Curso' : 'Departamento'}</label>
+            <select id="users-filter-dep">
+              <option value="all">Todos</option>
+              <option value="DAM">DAM</option>
+              <option value="DAW">DAW</option>
+            </select>
+          </div>
+          <div class="row">
+            <label>${role==='alumno' ? 'Año' : 'Curso'}</label>
+            <select id="users-filter-course">
+              <option value="all">Todos</option>
+              <option value="1">1º</option>
+              <option value="2">2º</option>
+            </select>
+          </div>
           <div class="row grow">
             <label>Buscar</label>
             <input type="search" id="users-filter-q" placeholder="Nombre o email..." />
@@ -1628,20 +1974,64 @@ export class HomeView {
       const { ipcRenderer } = window.require ? window.require('electron') : {};
       if (!ipcRenderer) return;
       const listEl = this.#root.querySelector('#users-admin-list');
+      // Si cambiamos de rol (alumnos/profesores) o se fuerza recarga, reseteamos filtros
+      if (this.#usersFilter.role !== role || force) {
+        this.#usersFilter = { role, q: '', dep: 'all', course: 'all' };
+      }
       if (!this.#usersList.length || force) {
-        const list = await ipcRenderer.invoke('nfc:list-users-with-nfc');
-        this.#usersList = (list||[]).map(u=>({
-          ...u,
-          role: String(u.role||'alumno'),
-          email: u.email || u.gmail || '',
-          apellidos: u.apellidos || '',
-          dni: u.dni || ''
-        }));
+        let token = null;
+        try { token = localStorage.getItem('wf_jwt'); } catch { token = null; }
+        const list = await ipcRenderer.invoke('nfc:list-users-with-nfc', { token });
+        this.#usersList = (list||[]).map(u=>{
+          // Normalizar rol que viene de la API Spring (rol: ALUMNO/PROFESOR/ADMIN)
+          let rawRole = u.role != null ? u.role : (u.rol != null ? u.rol : 'ALUMNO');
+          rawRole = String(rawRole).toUpperCase();
+          let roleNorm = 'alumno';
+          if (rawRole === 'PROFESOR' || rawRole === 'PROFESSOR') roleNorm = 'professor';
+          else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') roleNorm = 'admin';
+
+          return {
+            ...u,
+            _id: u._id || u.id || undefined,
+            role: roleNorm,
+            email: u.email || u.gmail || '',
+            apellidos: u.apellidos || '',
+            dni: u.dni || '',
+            curso: u.curso || ''
+          };
+        });
       }
       this.#usersFilter.role = role;
       if (listEl) this.#applyUsersFiltersAndRender(listEl);
       const qInput = this.#root.querySelector('#users-filter-q');
-      if (qInput && listEl) { let t=null; qInput.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(()=>{ this.#usersFilter.q = (qInput.value||'').trim().toLowerCase(); this.#applyUsersFiltersAndRender(listEl); }, 180); }); }
+      const depSel = this.#root.querySelector('#users-filter-dep');
+      const courseSel = this.#root.querySelector('#users-filter-course');
+      if (qInput && listEl) {
+        // Sincronizar valor inicial del buscador con el filtro actual
+        qInput.value = this.#usersFilter.q || '';
+        let t=null;
+        qInput.addEventListener('input', ()=>{
+          clearTimeout(t);
+          t=setTimeout(()=>{
+            this.#usersFilter.q = (qInput.value||'').trim().toLowerCase();
+            this.#applyUsersFiltersAndRender(listEl);
+          }, 180);
+        });
+      }
+      if (depSel && listEl) {
+        depSel.value = this.#usersFilter.dep;
+        depSel.addEventListener('change', ()=>{
+          this.#usersFilter.dep = depSel.value || 'all';
+          this.#applyUsersFiltersAndRender(listEl);
+        });
+      }
+      if (courseSel && listEl) {
+        courseSel.value = this.#usersFilter.course;
+        courseSel.addEventListener('change', ()=>{
+          this.#usersFilter.course = courseSel.value || 'all';
+          this.#applyUsersFiltersAndRender(listEl);
+        });
+      }
       // Actualizar contador
       const countEl = this.#root.querySelector('.users-count');
       if (countEl && listEl) {
@@ -1657,8 +2047,38 @@ export class HomeView {
   #applyUsersFiltersAndRender(listEl){
     const role = this.#usersFilter.role;
     const q = (this.#usersFilter.q||'').toLowerCase();
+    const depFilter = this.#usersFilter.dep || 'all';
+    const courseFilter = this.#usersFilter.course || 'all';
     const filtered = (this.#usersList||[]).filter(u=>String(u.role||'alumno')===role).filter(u=>{
-      if (!q) return true; return (String(u.nombre||'').toLowerCase().includes(q) || String(u.email||'').toLowerCase().includes(q));
+      // Texto
+      if (q) {
+        const nameMatch = String(u.nombre||'').toLowerCase().includes(q);
+        const emailMatch = String(u.email||'').toLowerCase().includes(q);
+        if (!nameMatch && !emailMatch) return false;
+      }
+
+      const curso = u.curso || '';
+      let dept;
+      if (role === 'alumno') {
+        if (curso.startsWith('DAW')) dept = 'DAW';
+        else if (curso.startsWith('DAM')) dept = 'DAM';
+        else dept = 'none';
+      } else {
+        const depsArr = Array.isArray(u.departamentos) ? u.departamentos : [];
+        const depsNames = depsArr.map(d=>d?.nombre || d).filter(Boolean);
+        dept = depsNames[0] || 'none';
+      }
+
+      if (depFilter !== 'all') {
+        if (dept !== depFilter) return false;
+      }
+
+      if (courseFilter !== 'all') {
+        const year = curso.endsWith('1') ? '1' : (curso.endsWith('2') ? '2' : '');
+        if (year !== courseFilter) return false;
+      }
+
+      return true;
     });
     listEl.innerHTML = this.#renderUserRows(filtered) || '<div class="empty">No hay usuarios.</div>';
     this.#bindUsersRowActions(listEl);
@@ -1669,6 +2089,22 @@ export class HomeView {
       const has = !!u.nfcToken;
       const tokenLabel = has ? `UID: ${u.nfcToken}` : 'Sin NFC';
       const avatarStyle = u.fotoPerfil ? ` style="background-image:url('${u.fotoPerfil}');background-size:cover;background-position:center;"` : '';
+      const depsArr = Array.isArray(u.departamentos) ? u.departamentos : [];
+      const depsNames = depsArr.map(d => d?.nombre || d).filter(Boolean);
+      const curso = u.curso || '';
+      let deptLabel;
+      if (u.role === 'alumno') {
+        if (curso.startsWith('DAW')) deptLabel = 'DAW';
+        else if (curso.startsWith('DAM')) deptLabel = 'DAM';
+        else deptLabel = 'Sin departamento';
+      } else {
+        deptLabel = depsNames.length ? depsNames.join(', ') : 'Sin departamento';
+      }
+      const prettyCurso = curso
+        ? (curso.startsWith('DAW') ? (curso.endsWith('1') ? '1º DAW' : '2º DAW')
+          : curso.startsWith('DAM') ? (curso.endsWith('1') ? '1º DAM' : '2º DAM')
+          : curso)
+        : '';
       return `
         <div class="nfc-row" data-id="${u._id}">
           <div class="nfc-row-info">
@@ -1679,6 +2115,10 @@ export class HomeView {
                 <div class="email">${u.email || ''}</div>
                 <div class="role">Rol: ${u.role || 'alumno'}</div>
                 <div class="extra">DNI: ${u.dni || ''}${u.apellidos? ' · Apellidos: '+u.apellidos : ''}</div>
+                <div class="extra">
+                  <span class="pill pill-soft">Departamento: ${deptLabel}</span>
+                  ${prettyCurso ? `<span class="pill pill-soft">Curso: ${prettyCurso}</span>` : ''}
+                </div>
               </div>
             </div>
           </div>
@@ -1705,7 +2145,30 @@ export class HomeView {
         const user = (this.#usersList||[]).find(x=>x._id===id);
         if (!user) return;
         if (act==='view') {
-          const html = `<b>Nombre:</b> ${user.nombre||''}<br><b>Apellidos:</b> ${user.apellidos||''}<br><b>Email:</b> ${user.email||''}<br><b>DNI:</b> ${user.dni||''}<br><b>Rol:</b> ${user.role||'alumno'}<br>${user.nfcToken?('<b>UID:</b> '+user.nfcToken):''}`;
+          const depsArr = Array.isArray(user.departamentos) ? user.departamentos : [];
+          const depsNames = depsArr.map(d => d?.nombre || d).filter(Boolean);
+          const curso = user.curso || '';
+          let deptLabel;
+          if (user.role === 'alumno') {
+            if (curso.startsWith('DAW')) deptLabel = 'DAW';
+            else if (curso.startsWith('DAM')) deptLabel = 'DAM';
+            else deptLabel = 'Sin departamento';
+          } else {
+            deptLabel = depsNames.length ? depsNames.join(', ') : 'Sin asignar';
+          }
+          const prettyCurso = curso
+            ? (curso.startsWith('DAW') ? (curso.endsWith('1') ? '1º DAW' : '2º DAW')
+              : curso.startsWith('DAM') ? (curso.endsWith('1') ? '1º DAM' : '2º DAM')
+              : curso)
+            : '';
+          const html = `<b>Nombre:</b> ${user.nombre||''}<br>`+
+                       `<b>Apellidos:</b> ${user.apellidos||''}<br>`+
+                       `<b>Email:</b> ${user.email||''}<br>`+
+                       `<b>DNI:</b> ${user.dni||''}<br>`+
+                       `<b>Rol:</b> ${user.role||'alumno'}<br>`+
+                       `<b>Departamento:</b> ${deptLabel}<br>`+
+                       `${prettyCurso ? `<b>Curso:</b> ${prettyCurso}<br>` : ''}`+
+                       `${user.nfcToken?('<b>UID:</b> '+user.nfcToken):''}`;
           await this.#confirmDialog('Perfil', html, 'Cerrar', 'Cancelar');
         } else if (act==='edit') {
           this.#openEditUser(user);
@@ -1714,7 +2177,7 @@ export class HomeView {
     });
   }
 
-  #openEditUser(user){
+  async #openEditUser(user){
     const modal = document.createElement('div');
     modal.className = 'app-modal-backdrop';
     modal.innerHTML = `
@@ -1745,6 +2208,24 @@ export class HomeView {
               <option value="ADMIN" ${user.role==='admin'?'selected':''}>Admin</option>
             </select>
           </div>
+          ${user.role === 'alumno' ? `
+          <div class="row">
+            <label>Curso</label>
+            <select id="ed-curso">
+              <option value="">Sin curso</option>
+              <option value="DAM1" ${user.curso==='DAM1'?'selected':''}>1º DAM</option>
+              <option value="DAM2" ${user.curso==='DAM2'?'selected':''}>2º DAM</option>
+              <option value="DAW1" ${user.curso==='DAW1'?'selected':''}>1º DAW</option>
+              <option value="DAW2" ${user.curso==='DAW2'?'selected':''}>2º DAW</option>
+            </select>
+          </div>` : `
+          <div class="row">
+            <label>Departamentos</label>
+            <div class="dept-edit-opts">
+              <label><input type="checkbox" value="DAM" class="ed-dept"/> DAM</label>
+              <label><input type="checkbox" value="DAW" class="ed-dept"/> DAW</label>
+            </div>
+          </div>`}
         </div>
         <div class="app-modal-actions">
           <button class="btn btn-ghost" id="modal-cancel">Cancelar</button>
@@ -1782,6 +2263,16 @@ export class HomeView {
       const el = modal.querySelector('#'+id);
       if (el) el.addEventListener('input', ()=>{ const k = id.replace('ed-',''); const err = modal.querySelector('#err-'+k); if (err) err.textContent = ''; el.style.borderColor = ''; });
     });
+
+    // Precargar departamentos
+    await this.#ensureDepartamentosLoaded();
+    const depChecks = Array.from(modal.querySelectorAll('.ed-dept'));
+    const currentDeps = Array.isArray(user.departamentos) ? user.departamentos : [];
+    const currentNames = currentDeps.map(d => d?.nombre || d).filter(Boolean);
+    depChecks.forEach(chk => {
+      chk.checked = currentNames.includes(chk.value);
+    });
+
     modal.querySelector('#modal-ok').onclick = async () => {
       if (!validate()) return;
       const updates = {
@@ -1809,6 +2300,36 @@ export class HomeView {
               role: roleMap[String(res.usuario.rol||'ALUMNO')] || 'alumno',
               nfcToken: res.usuario.nfcToken || this.#usersList[idx].nfcToken,
             };
+          }
+          // Guardar curso/departamentos según rol
+          let depIds = [];
+          let curso = this.#usersList[idx]?.curso || '';
+          if (roleMap[String(res.usuario.rol||'ALUMNO')] === 'alumno') {
+            const cursoSel = modal.querySelector('#ed-curso');
+            curso = cursoSel ? String(cursoSel.value||'').trim() : '';
+          } else {
+            const selectedNames = depChecks.filter(c => c.checked).map(c => c.value);
+            depIds = this.#mapDeptNamesToIds(selectedNames);
+          }
+          if (depIds.length || curso !== this.#usersList[idx]?.curso) {
+            try {
+              const headers = { 'Content-Type': 'application/json' };
+              if (jwt) headers['Authorization'] = 'Bearer ' + jwt;
+              const depRes = await fetch(`http://localhost:8080/api/usuarios/${user._id}/departamentos`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ departamentos: depIds, curso }),
+              });
+              const depData = await depRes.json();
+              if (depRes.ok) {
+                const deps = (depData && depData.departamentos) || depData || [];
+                if (idx>=0) this.#usersList[idx] = { ...this.#usersList[idx], departamentos: deps, curso };
+              }
+            } catch (e) {
+              this.#toast(e?.message || 'No se pudieron actualizar los departamentos.', 'warn');
+            }
+          } else if (idx>=0) {
+            this.#usersList[idx] = { ...this.#usersList[idx], departamentos: [] };
           }
           // Refrescar la lista en vivo sin necesidad de re-navegar
           const listEl = this.#root.querySelector('#users-admin-list');
@@ -1888,16 +2409,26 @@ export class HomeView {
       if (!ipcRenderer) return;
       const listEl = this.#root.querySelector('#nfc-admin-list');
       if (!listEl) return;
-      ipcRenderer.invoke('nfc:list-users-with-nfc').then((users) => {
+      let token = null;
+      try { token = localStorage.getItem('wf_jwt'); } catch { token = null; }
+      ipcRenderer.invoke('nfc:list-users-with-nfc', { token }).then((users) => {
         this.#nfcUsers = users || [];
         this.#applyNfcFiltersAndRender(listEl);
         // Bind filter controls
         const roleSel = this.#root.querySelector('#nfc-filter-role');
         const statusSel = this.#root.querySelector('#nfc-filter-status');
         const qInput = this.#root.querySelector('#nfc-filter-q');
-        if (roleSel) roleSel.addEventListener('change', ()=>{ this.#nfcFilter.role = roleSel.value; this.#applyNfcFiltersAndRender(listEl); });
-        if (statusSel) statusSel.addEventListener('change', ()=>{ this.#nfcFilter.status = statusSel.value; this.#applyNfcFiltersAndRender(listEl); });
+        // Sincronizar valores iniciales con el estado de filtros
+        if (roleSel) {
+          roleSel.value = this.#nfcFilter.role;
+          roleSel.addEventListener('change', ()=>{ this.#nfcFilter.role = roleSel.value; this.#applyNfcFiltersAndRender(listEl); });
+        }
+        if (statusSel) {
+          statusSel.value = this.#nfcFilter.status;
+          statusSel.addEventListener('change', ()=>{ this.#nfcFilter.status = statusSel.value; this.#applyNfcFiltersAndRender(listEl); });
+        }
         if (qInput) {
+          qInput.value = this.#nfcFilter.q || '';
           let t=null; qInput.addEventListener('input', ()=>{ clearTimeout(t); t=setTimeout(()=>{ this.#nfcFilter.q = (qInput.value||'').trim().toLowerCase(); this.#applyNfcFiltersAndRender(listEl); }, 180); });
         }
       }).catch(err => {

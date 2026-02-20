@@ -154,11 +154,21 @@ app.on('ready', () => {
     }
   });
 
-  // Lista de usuarios con estado NFC
-  ipcMain.handle('nfc:list-users-with-nfc', async () => {
+  // Lista de usuarios (desde API Spring, incluye curso/departamentos)
+  ipcMain.handle('nfc:list-users-with-nfc', async (event, ctx) => {
     try {
-      const list = await db.listAllUsersSimple();
-      return list;
+      const token = ctx && ctx.token;
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      const res = await fetch('http://localhost:8080/api/usuarios', { headers });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch {}
+      if (!res.ok) {
+        const msg = (data && (data.error || data.message)) || (text && text.trim()) || `HTTP ${res.status}`;
+        throw new Error(msg || 'Error listando usuarios');
+      }
+      return Array.isArray(data) ? data : [];
     } catch (err) {
       throw new Error(err.message || 'Error listando usuarios');
     }
