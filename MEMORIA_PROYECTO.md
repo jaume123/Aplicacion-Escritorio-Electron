@@ -382,4 +382,4 @@ Posible versión móvil en el futuro.
 
 ---
 
-> Nota: este documento sirve como base para elaborar la memoria final del proyecto. Se puede ampliar cada sección con capturas de pantalla, diagramas UML (casos de uso, clases y secuencia) y ejemplos reales de flujos (p. ej. "Alumno ficha entrada con NFC", "Profesor corrige una asistencia").
+> Nota: este documento sirve como base  para ver la capacidad de un programador moderno attentamente jaime Juan Ferrer Haro postdata : Aprobarme 
