@@ -308,11 +308,77 @@ La aplicación Electron se abrirá con la ventana principal y conectará con la 
 - La interfaz futurista mejora la usabilidad y da coherencia visual a todas las secciones.
 
 ### 9.2. Mejoras futuras
-- Exportación de asistencias a CSV/Excel para tutorías y justificaciones.
-- Panel de estadísticas de asistencia (por curso, por alumno, por periodo).
-- Notificaciones (email o push) para avisos de ausencias repetidas.
-- Soporte para otros métodos de autenticación (OIDC, SSO del centro).
-- Tests automáticos más completos (unitarios e integración) tanto en la API como en la capa de renderer.
+🔹 Sistema de chat interno entre usuarios
+
+Implementación de un sistema de mensajería interna entre alumnos y profesores.
+
+Desarrollo de una nueva colección en MongoDB (mensajes) con campos como: emisor, receptor, contenido, fecha y estado (leído/no leído).
+
+Integración en la aplicación Electron mediante una interfaz tipo conversación.
+
+Posible implementación mediante WebSockets para comunicación en tiempo real o mediante actualización periódica (polling REST).
+
+Protección del sistema mediante validación JWT y control de permisos por rol.
+
+Este sistema mejoraría la comunicación directa dentro de la plataforma sin necesidad de herramientas externas.
+
+🔹 Sistema de avisos académicos profesor → alumno
+
+Implementación de un módulo de notificaciones académicas enviadas por profesores.
+
+Creación de una colección notificaciones en MongoDB.
+
+Posibilidad de enviar avisos individuales o generales.
+
+Visualización de avisos pendientes al iniciar sesión.
+
+Control de estado leído/no leído.
+
+Posible ampliación futura con notificaciones push o email.
+
+Este sistema permitiría centralizar comunicaciones importantes dentro de la propia aplicación.
+
+🔹 Optimización y refactorización avanzada del código
+
+Reorganización y modularización de controladores en backend.
+
+Optimización de consultas MongoDB para reducir latencia.
+
+Eliminación de duplicación de código en HomeView y controladores.
+
+Implementación de sistema de caché temporal para reducir llamadas repetidas a la API.
+
+Mejora de la gestión de errores HTTP con mensajes personalizados.
+
+Separación más estricta de responsabilidades siguiendo principios SOLID.
+
+Estas mejoras aumentarían la mantenibilidad, escalabilidad y rendimiento del sistema.
+
+🔹 Mejoras técnicas adicionales
+
+Sistema de logs estructurados para auditoría de accesos.
+
+Control avanzado de sesiones activas.
+
+Mejor gestión de expiración y renovación de JWT.
+
+Pruebas unitarias automatizadas con JUnit (backend).
+
+Tests de integración para endpoints críticos.
+
+Posible despliegue en entorno real (VPS o servidor del centro).
+
+🔹 Ampliaciones funcionales complementarias
+
+Panel de estadísticas visuales de asistencia (gráficas por alumno, mes o curso).
+
+Sistema de exportación avanzada de datos (CSV/Excel).
+
+Validación completa del NIF con cálculo real de letra de control.
+
+Sistema de autenticación federada (SSO del centro).
+
+Posible versión móvil en el futuro.
 
 ---
 
