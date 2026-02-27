@@ -2412,7 +2412,21 @@ export class HomeView {
       let token = null;
       try { token = localStorage.getItem('wf_jwt'); } catch { token = null; }
       ipcRenderer.invoke('nfc:list-users-with-nfc', { token }).then((users) => {
-        this.#nfcUsers = users || [];
+        this.#nfcUsers = (users || []).map((u) => {
+          let rawRole = u?.role != null ? u.role : (u?.rol != null ? u.rol : 'ALUMNO');
+          rawRole = String(rawRole).toUpperCase();
+          let roleNorm = 'alumno';
+          if (rawRole === 'PROFESOR' || rawRole === 'PROFESSOR') roleNorm = 'professor';
+          else if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRADOR') roleNorm = 'admin';
+
+          return {
+            ...u,
+            _id: u?._id || u?.id || undefined,
+            role: roleNorm,
+            email: u?.email || u?.gmail || '',
+            nfcToken: u?.nfcToken || u?.nfc || u?.uidNfc || null,
+          };
+        });
         this.#applyNfcFiltersAndRender(listEl);
         // Bind filter controls
         const roleSel = this.#root.querySelector('#nfc-filter-role');
