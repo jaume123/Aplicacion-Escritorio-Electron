@@ -1,6 +1,39 @@
-# Web Familia · Escritorio + API (Resumen técnico)
+<h1 align="center">🎓 Web Familia</h1>
+<p align="center"><b>Cross-platform desktop application + REST API for student management</b><br>
+Electron · Spring Boot · MongoDB · NFC card authentication</p>
 
-Aplicación de escritorio (Electron) con backend Spring Boot + MongoDB para gestión de alumnado (IES Abastos). Incluye lectura NFC, login por DNI, control de asistencias y herramientas de administración (NFC, perfiles y altas de usuarios).
+<p align="center">
+  <img src="https://img.shields.io/badge/Electron-38.x-47848F?style=flat-square&logo=electron&logoColor=white" alt="Electron">
+  <img src="https://img.shields.io/badge/Spring_Boot-3.x-6DB33F?style=flat-square&logo=spring-boot&logoColor=white" alt="Spring Boot">
+  <img src="https://img.shields.io/badge/MongoDB-7.x-47A248?style=flat-square&logo=mongodb&logoColor=white" alt="MongoDB">
+  <img src="https://img.shields.io/badge/JWT-Nimbus-000000?style=flat-square&logo=jsonwebtokens&logoColor=white" alt="JWT">
+  <img src="https://img.shields.io/badge/NFC-PC%2FSC-EA580C?style=flat-square" alt="NFC">
+  <img src="https://img.shields.io/badge/Java-17%2B-007396?style=flat-square&logo=java&logoColor=white" alt="Java">
+  <img src="https://img.shields.io/badge/Node.js-18%2B-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js">
+</p>
+
+---
+
+## 📌 Overview
+
+Real-world desktop application built for **IES Abastos** (educational center) to manage students, teachers and administrators. The system provides **NFC card authentication**, **automatic attendance tracking** via login/logout events, a **shared school calendar** (exams, trips, events) and full **profile management with photo upload**.
+
+The project is split into two parts:
+
+- **Desktop client** — Electron app with MVC architecture (`controller/`, `model/`, `view/`), futuristic UI, NFC reader integration via PC/SC.
+- **REST API** — Spring Boot 3.x backend with JWT authentication, exposing endpoints for users, attendance and events; persistence on MongoDB.
+
+> Aplicación de escritorio (Electron) con backend Spring Boot + MongoDB para gestión de alumnado (IES Abastos). Incluye lectura NFC, login por DNI, control de asistencias y herramientas de administración (NFC, perfiles y altas de usuarios).
+
+## ✨ Highlights
+
+- 🔐 **Dual authentication**: DNI + password (BCrypt) **and** NFC card login.
+- ⏱️ **Automatic attendance**: entries/exits registered automatically on app login/logout — no manual punch button.
+- 📅 **Shared calendar**: teachers/admins create exams, trips and events; students see read-only details with role-based color chips.
+- 👥 **Role-based UI**: distinct experience for students, teachers and administrators.
+- 🖼️ **Profile photo system**: integrated upload, persisted to MongoDB, cached in `localStorage`, reused across all user lists.
+- 🏷️ **NFC management**: assign / disable / resolve UID conflicts with owner display.
+- 🔒 **Spring Security + JWT**: resource-server pattern, token in `wf_jwt`, stateless auth on protected endpoints.
 
 ## Tecnologías Utilizadas
 - Electron 38.x: shell de escritorio y comunicación IPC.
@@ -128,4 +161,14 @@ npm start
 - Exportación de asistencias (CSV).
 
 ---
-Proyecto-provisional-ESCRITORIO — Aplicación nativa de escritorio para la gestión del alumnado (IES Abastos).
+
+## 👤 Author
+
+**Jaime Juan Ferrer Haro** — Junior Full Stack Developer
+
+- 🌐 Portfolio: [cv-i01frr8v8-jaume123s-projects.vercel.app](https://cv-i01frr8v8-jaume123s-projects.vercel.app)
+- 💼 LinkedIn: [linkedin.com/in/jaime-juan-ferrer-haro-99063a291](https://linkedin.com/in/jaime-juan-ferrer-haro-99063a291)
+- 🐙 GitHub: [@jaume123](https://github.com/jaume123)
+- ✉️ jaume534fh@gmail.com
+
+> Project developed as part of the **Higher Technical Degree in DAM** (Multi-platform Application Development) curriculum.
