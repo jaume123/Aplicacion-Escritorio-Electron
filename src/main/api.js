@@ -6,6 +6,9 @@ async function asignarTokenNFC(userId, token) {
   return await asignarTokenNFC(userId, token);
 }
 
+//Definir que implementacion de codigo de ia necesitamos para poder  implementar la ia en nuestro proyecto no implementar ninguna api key publica
+//Ten cuidado tambien con lo que quieres poner de fuera porque si  generas el codigo desde chatgpt o claude CAMBIALEEEE SI O SI LA PUTA API Key 
+//que no nos pasa como la ultima vez  porque si no la van a volver a  robar con todos los datos que eso implica 
 // Registrar entrada/salida por token NFC
 async function registrarNFC(token) {
   const { registrarNFC } = require('./db');
